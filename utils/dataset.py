@@ -11,8 +11,8 @@ from PIL import Image
 import cv2
 from pycocotools import mask as maskUtils
 from pycocotools.coco import COCO
-from waldo.data_manipulation import convert_to_combined_image
-from waldo.data_transformation import make_square_image_with_equal_padding, randomly_crop_combined_image, randomly_crop_image_with_mask
+from utils.data_manipulation import convert_to_combined_image
+from utils.data_transformation import make_square_image_with_equal_padding, randomly_crop_combined_image, randomly_crop_image_with_mask
 
 
 class COCODataset:

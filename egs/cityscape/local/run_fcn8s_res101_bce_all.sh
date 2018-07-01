@@ -11,9 +11,7 @@ lr=0.01
 momentum=0.9
 dir=exp/all/fcn8s_resnet101_bce
 
-. ./cmd.sh
 . ./path.sh
-. ./scripts/parse_options.sh
 
 
 
@@ -32,7 +30,7 @@ fi
 
 if [ $stage -le 2 ]; then
   echo "$0: Training the network....."
-  $cmd --gpu 1 --mem 30G $dir/train_cont2.log limit_num_gpus.sh local/train_iou.py \
+  python3 local/train_iou.py \
        --batch-size $batch_size \
        --momentum $momentum \
        --train-image-size $train_image_size \
@@ -43,7 +41,6 @@ if [ $stage -le 2 ]; then
        --arch fcn8_resnet101 \
        --log-freq 100 \
        --core-config $dir/configs/core.config \
-       --resume $dir/checkpoint.pth.tar \
        --visualize \
        --pretrain \
        --tensorboard \

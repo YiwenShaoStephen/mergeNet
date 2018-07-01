@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 # Copyright 2018 Yiwen Shao
 
 # Apache 2.0
