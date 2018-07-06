@@ -9,6 +9,7 @@ import os
 import shutil
 import time
 import torch
+import torch.nn.functional as F
 import torchvision
 import numpy as np
 from tensorboard_logger import log_value
@@ -16,7 +17,8 @@ from tensorboard_logger import log_value
 
 def train(trainloader, model, criterion_cls, criterion_ofs, optimizer,
           n_classes, batch_size, epoch, iterations,
-          print_freq=10, log_freq=1000, tensorboard=True, score_metrics=None, alpha=1):
+          print_freq=10, log_freq=1000, tensorboard=True, score_metrics=None,
+          offset_metrics=None, alpha=1):
     """Train for one epoch on the training set"""
     model.train()
     cls_losses = AverageMeter()
@@ -31,6 +33,8 @@ def train(trainloader, model, criterion_cls, criterion_ofs, optimizer,
 
     if score_metrics:
         score_metrics.reset()  # clean up data
+    if offset_metrics:
+        offset_metrics.reset()
 
     end = time.time()
     for i, (input, class_label, bound) in enumerate(trainloader):
@@ -55,7 +59,9 @@ def train(trainloader, model, criterion_cls, criterion_ofs, optimizer,
         iterations += 1
 
         if score_metrics:
-            score_metrics.update(output, class_label)
+            score_metrics.update(output[:, :n_classes, :, :], class_label)
+        if offset_metrics:
+            offset_metrics.update(output[:, n_classes:, :, :], bound)
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -83,12 +89,21 @@ def train(trainloader, model, criterion_cls, criterion_ofs, optimizer,
             log_value('train_iou', mean_iou, epoch)
         score_metrics.print_stat()
 
+    if offset_metrics:
+        iou, mean_iou = offset_metrics.get_scores()
+        if tensorboard:
+            log_value('train_ofs_miou', mean_iou, epoch)
+            log_value('train_ofs_1_iou', iou[0], epoch)
+            log_value('train_ofs_2_iou', iou[1], epoch)
+        offset_metrics.print_stat()
+
     return iterations
 
 
 def validate(validateloader, model, criterion_cls, criterion_ofs,
              n_classes, batch_size, epoch, iterations,
-             print_freq=10, log_freq=1000, tensorboard=True, score_metrics=None, alpha=1):
+             print_freq=10, log_freq=1000, tensorboard=True, score_metrics=None,
+             offset_metrics=None, alpha=1):
     """Perform validation on the validation set"""
     cls_losses = AverageMeter()
     ofs_losses = AverageMeter()
@@ -99,6 +114,8 @@ def validate(validateloader, model, criterion_cls, criterion_ofs,
 
     if score_metrics:
         score_metrics.reset()
+    if offset_metrics:
+        offset_metrics.reset()
 
     for i, (input, class_label, bound) in enumerate(validateloader):
 
@@ -117,7 +134,9 @@ def validate(validateloader, model, criterion_cls, criterion_ofs,
             all_losses.update(all_loss.item(), batch_size)
 
             if score_metrics:
-                score_metrics.update(output, class_label)
+                score_metrics.update(output[:, :n_classes, :, :], class_label)
+            if offset_metrics:
+                offset_metrics.update(output[:, n_classes:, :, :], bound)
 
             if i % print_freq == 0:
                 print('Val: [{0}][{1}/{2}]\t'
@@ -131,6 +150,14 @@ def validate(validateloader, model, criterion_cls, criterion_ofs,
         log_value('val_cls_loss', cls_losses.avg, int(iterations / log_freq))
         log_value('val_ofs_loss', ofs_losses.avg, int(iterations / log_freq))
 
+    if offset_metrics:
+        iou, mean_iou = offset_metrics.get_scores()
+        if tensorboard:
+            log_value('val_ofs_miou', mean_iou, epoch)
+            log_value('val_ofs_1_iou', iou[0], epoch)
+            log_value('val_ofs_2_iou', iou[1], epoch)
+        offset_metrics.print_stat()
+
     if score_metrics:
         score, class_iou = score_metrics.get_scores()
         mean_iou = score['mean_IU']
@@ -139,8 +166,8 @@ def validate(validateloader, model, criterion_cls, criterion_ofs,
         score_metrics.print_stat()
 
         return mean_iou
-    else:
-        return all_losses.avg
+
+    return all_losses.avg
 
 
 def sample(model, dataloader, outdir, core_config):
@@ -275,3 +302,40 @@ class runningScore(object):
             print('{}\t{}'.format(class_nm, class_iou[class_nm]))
         print('mean IoU\t{}'.format(score['mean_IU']))
         print('pixel acc\t{}'.format(score['overall_acc']))
+
+
+class offsetIoU(object):
+    def __init__(self, offset_list):
+        self.offset_list = offset_list
+        self.num_offsets = len(offset_list)
+        self.intersection = np.zeros(self.num_offsets)
+        self.union = np.zeros(self.num_offsets)
+        self.iou = np.zeros(self.num_offsets)
+
+    def update(self, pred, gt):
+        # 1-0 convert
+        for i in range(self.num_offsets):
+            pflat = (1 - F.sigmoid(pred[:, i, :, :])
+                     ).detach().cpu().contiguous().view(-1).numpy()
+            gflat = (1 - gt[:, i, :, :]
+                     ).detach().cpu().contiguous().view(-1).numpy()
+            intersection = (pflat * gflat).sum()
+            self.intersection[i] += intersection
+            self.union[i] += pflat.sum() + gflat.sum() - intersection
+
+    def reset(self):
+        self.intersection = np.zeros(self.num_offsets)
+        self.union = np.zeros(self.num_offsets)
+        self.iou = np.zeros(self.num_offsets)
+
+    def get_scores(self):
+        for i in range(self.num_offsets):
+            self.iou[i] = self.intersection[i] / self.union[i]
+        return self.iou, self.iou.mean()
+
+    def print_stat(self):
+        iou, miou = self.get_scores()
+        print('offset\t IoU')
+        for i, offset in enumerate(self.offset_list):
+            print('{}\t{}'.format(offset, iou[i]))
+        print('mean IoU\t {}'.format(miou))

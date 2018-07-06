@@ -9,7 +9,7 @@ epochs=200
 batch_size=16
 lr=0.01
 momentum=0.9
-dir=exp/crop/pspfpnet50
+dir=exp/crop/pspfpnet50_alpha10
 
 . ./cmd.sh
 . ./path.sh
@@ -39,7 +39,7 @@ if [ $stage -le 2 ]; then
        --epochs $epochs \
        --lr $lr \
        --loss bce \
-       --alpha 1 \
+       --alpha 10 \
        --arch pspfpnet \
        --log-freq 100 \
        --core-config $dir/configs/core.config \

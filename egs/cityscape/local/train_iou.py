@@ -16,7 +16,7 @@ import torch.optim.lr_scheduler as lr_scheduler
 from utils.dataset import COCODataset
 from utils.loss import CrossEntropyLossOneHot, SoftDiceLoss, MultiBCEWithLogitsLoss
 from utils.core_config import CoreConfig
-from utils.train_utils import train, validate, sample, save_checkpoint, soft_dice_loss, runningScore
+from utils.train_utils import train, validate, sample, save_checkpoint, soft_dice_loss, runningScore, offsetIoU
 
 
 parser = argparse.ArgumentParser(description='Pytorch cityscape setup')
@@ -74,6 +74,8 @@ parser.add_argument('--pretrain', help='use pretrained model on ImageNet',
                     action='store_true')
 parser.add_argument('--visualize', help='Visualize network output after each epoch',
                     action='store_true')
+parser.add_argument('--crop', help='Use cropped train images',
+                    action='store_true')
 
 best_iou = 0
 random.seed(0)
@@ -116,15 +118,14 @@ def main():
 
     # dataset
     trainset = COCODataset(args.train_img, args.train_ann, c_config,
-                           (args.train_image_size, args.train_image_size * 2),
-                           class_nms=class_nms, limits=args.limits)
+                           (args.train_image_size, args.train_image_size),
+                           class_nms=class_nms, limits=args.limits, crop=args.crop)
     trainloader = torch.utils.data.DataLoader(
         trainset, num_workers=4, batch_size=args.batch_size, shuffle=True)
     valset = COCODataset(args.val_img, args.val_ann, c_config,
-                         (args.train_image_size, args.train_image_size * 2),
                          class_nms=class_nms, limits=args.limits)
     valloader = torch.utils.data.DataLoader(
-        valset, num_workers=4, batch_size=args.batch_size)
+        valset, num_workers=4, batch_size=4)
     NUM_TRAIN = len(trainset)
     NUM_VAL = len(valset)
     print('Training samples: {0} \n'
@@ -215,8 +216,10 @@ def main():
     iterations = args.start_epoch * int(len(trainset) / args.batch_size)
 
     # define score metrics
-    score_metrics = runningScore(num_classes, valset.catNms)
     score_metrics_train = runningScore(num_classes, trainset.catNms)
+    score_metrics = runningScore(num_classes, valset.catNms)
+    offset_metrics_train = offsetIoU(offset_list)
+    offset_metrics_val = offsetIoU(offset_list)
 
     # train
     for epoch in range(args.start_epoch, args.epochs):
@@ -228,6 +231,7 @@ def main():
                            log_freq=args.log_freq,
                            tensorboard=args.tensorboard,
                            score_metrics=score_metrics_train,
+                           offset_metrics=offset_metrics_train,
                            alpha=args.alpha)
         val_iou = validate(valloader, model, criterion_cls, criterion_ofs,
                            num_classes, args.batch_size, epoch, iterations,
@@ -235,6 +239,7 @@ def main():
                            log_freq=args.log_freq,
                            tensorboard=args.tensorboard,
                            score_metrics=score_metrics,
+                           offset_metrics=offset_metrics_val,
                            alpha=args.alpha)
         # visualize some example outputs after each epoch
         if args.visualize:
