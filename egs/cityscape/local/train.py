@@ -107,7 +107,7 @@ def main():
                            limits=args.limits, crop=args.crop)
     trainloader = torch.utils.data.DataLoader(
         trainset, num_workers=4, batch_size=args.batch_size, shuffle=True)
-    valset = COCODataset(args.val_img, args.val_ann,
+    valset = COCODataset(args.val_img, args.val_ann, num_classes, offset_list,
                          scale=args.scale, limits=args.limits)
     valloader = torch.utils.data.DataLoader(
         valset, num_workers=4, batch_size=4)
@@ -196,7 +196,7 @@ def main():
             outdir = '{}/imgs/{}'.format(args.dir, epoch + 1)
             if not os.path.exists(outdir):
                 os.makedirs(outdir)
-            sample(model, valloader, outdir)
+            sample(num_classes, num_offsets, model, valloader, outdir)
 
         is_best = val_iou > best_iou
         best_iou = max(val_iou, best_iou)
