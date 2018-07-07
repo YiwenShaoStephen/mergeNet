@@ -8,6 +8,7 @@
 import os
 import shutil
 import time
+import math
 import torch
 import torch.nn.functional as F
 import torchvision
@@ -37,16 +38,17 @@ def train(trainloader, model, criterion_cls, criterion_ofs, optimizer,
         offset_metrics.reset()
 
     end = time.time()
-    for i, (input, class_label, bound) in enumerate(trainloader):
+    for i, (input, target) in enumerate(trainloader):
         input = input.cuda()
-        class_label = class_label.cuda()
-        bound = bound.cuda()
+        target = target.cuda()
+        class_mask = target[:, :n_classes, :, :]
+        bound_mask = target[:, n_classes:, :, :]
         output = model(input)
 
         optimizer.zero_grad()
 
-        cls_loss = criterion_cls(output[:, :n_classes, :, :], class_label)
-        ofs_loss = criterion_ofs(output[:, n_classes:, :, :], bound)
+        cls_loss = criterion_cls(output[:, :n_classes, :, :], class_mask)
+        ofs_loss = criterion_ofs(output[:, n_classes:, :, :], bound_mask)
         all_loss = cls_loss + alpha * ofs_loss
 
         cls_losses.update(cls_loss.item(), batch_size)
@@ -59,9 +61,9 @@ def train(trainloader, model, criterion_cls, criterion_ofs, optimizer,
         iterations += 1
 
         if score_metrics:
-            score_metrics.update(output[:, :n_classes, :, :], class_label)
+            score_metrics.update(output[:, :n_classes, :, :], class_mask)
         if offset_metrics:
-            offset_metrics.update(output[:, n_classes:, :, :], bound)
+            offset_metrics.update(output[:, n_classes:, :, :], bound_mask)
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -117,16 +119,18 @@ def validate(validateloader, model, criterion_cls, criterion_ofs,
     if offset_metrics:
         offset_metrics.reset()
 
-    for i, (input, class_label, bound) in enumerate(validateloader):
+    for i, (input, target) in enumerate(validateloader):
 
         with torch.no_grad():
             input = input.cuda()
-            bound = bound.cuda(async=True)
-            class_label = class_label.cuda(async=True)
+            target = target.cuda()
+            class_mask = target[:, :n_classes, :, :]
+            bound_mask = target[:, n_classes:, :, :]
+
             output = model(input)
 
-            cls_loss = criterion_cls(output[:, :n_classes, :, :], class_label)
-            ofs_loss = criterion_ofs(output[:, n_classes:, :, :], bound)
+            cls_loss = criterion_cls(output[:, :n_classes, :, :], class_mask)
+            ofs_loss = criterion_ofs(output[:, n_classes:, :, :], bound_mask)
             all_loss = cls_loss + alpha * ofs_loss
 
             cls_losses.update(cls_loss.item(), batch_size)
@@ -134,9 +138,9 @@ def validate(validateloader, model, criterion_cls, criterion_ofs,
             all_losses.update(all_loss.item(), batch_size)
 
             if score_metrics:
-                score_metrics.update(output[:, :n_classes, :, :], class_label)
+                score_metrics.update(output[:, :n_classes, :, :], class_mask)
             if offset_metrics:
-                offset_metrics.update(output[:, n_classes:, :, :], bound)
+                offset_metrics.update(output[:, n_classes:, :, :], bound_mask)
 
             if i % print_freq == 0:
                 print('Val: [{0}][{1}/{2}]\t'
@@ -339,3 +343,14 @@ class offsetIoU(object):
         for i, offset in enumerate(self.offset_list):
             print('{}\t{}'.format(offset, iou[i]))
         print('mean IoU\t {}'.format(miou))
+
+
+def generate_offsets(num_offsets=15):
+    offset_list = []
+    size_ratio = 1.4
+    angle = math.pi * 5 / 9  # 100 degrees: just over 90 degrees.
+    for n in range(num_offsets):
+        x = round(math.cos(n * angle) * math.pow(size_ratio, n))
+        y = round(math.sin(n * angle) * math.pow(size_ratio, n))
+        offset_list.append((x, y))
+    return offset_list

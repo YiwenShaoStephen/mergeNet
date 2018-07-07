@@ -16,7 +16,6 @@ from heapq import heappush, heappop
 import numpy as np
 import warnings
 import resource
-import scipy.misc
 from collections import namedtuple
 
 SegmenterOptions = namedtuple('SegmenterOptions',
@@ -132,17 +131,17 @@ class AdjacencyRecord:
         self.obj2 = obj2
         self.sort_and_update_hash()
         if pixel is not None and offset is not None:
-           same_prob = segmenter.get_sameness_prob(pixel, offset)
-           log_same_prob = np.log(same_prob)
-           log_different_prob = np.log(1.0 - same_prob)
-           self.differentness_logprob = log_different_prob
-           self.sameness_logprob = log_same_prob
-           self.obj_merge_logprob = log_same_prob - log_different_prob
+            same_prob = segmenter.get_sameness_prob(pixel, offset)
+            log_same_prob = np.log(same_prob)
+            log_different_prob = np.log(1.0 - same_prob)
+            self.differentness_logprob = log_different_prob
+            self.sameness_logprob = log_same_prob
+            self.obj_merge_logprob = log_same_prob - log_different_prob
         else:
             self.compute_obj_merge_logprob(segmenter)
             if self.obj_merge_logprob is None:
-               raise Exception(
-                     "Bad adjacency record. The given objects are not adjacent.")
+                raise Exception(
+                    "Bad adjacency record. The given objects are not adjacent.")
         self.class_delta_logprob = None
         self.merged_class = None
         self.merge_priority = None
@@ -222,6 +221,7 @@ class AdjacencyRecord:
         return "<AREC-{}:  [{}, {}]  oml:{:0.2f}  cdl:{:0.2f}  mp:{:0.2f}>".format(
             id(self), self.obj1, self.obj2, self.obj_merge_logprob, self.class_delta_logprob, self.merge_priority)
 
+
 class ObjectSegmenter:
     def __init__(self, nnet_class_probs, nnet_sameness_probs, num_classes,
                  offsets, opts=None):
@@ -254,7 +254,6 @@ class ObjectSegmenter:
         self.queue = []   # Python's heapq
         self.init_objects_and_adjacency_records()
 
-
     def default_options(self):
         return SegmenterOptions(same_different_bias=0.0,
                                 object_merge_factor=1.0,
@@ -281,7 +280,8 @@ class ObjectSegmenter:
                     if (0 <= row + i < self.img_height and
                             0 <= col + j < self.img_width):
                         obj2 = self.pixel2obj[(row + i, col + j)]
-                        arec = AdjacencyRecord(obj1, obj2, self, (row, col), idx)
+                        arec = AdjacencyRecord(
+                            obj1, obj2, self, (row, col), idx)
                         self.adjacency_records[arec] = arec
                         obj1.adjacency_list[arec] = arec
                         obj2.adjacency_list[arec] = arec
@@ -317,7 +317,8 @@ class ObjectSegmenter:
         for obj in self.objects.values():
             for p in obj.pixels:
                 self.pixel2obj[p] = obj
-                tot_class_logprob += self.get_class_logprob(p, obj.object_class)
+                tot_class_logprob += self.get_class_logprob(
+                    p, obj.object_class)
         for row in range(self.img_height):
             for col in range(self.img_width):
                 p1 = (row, col)
@@ -335,7 +336,6 @@ class ObjectSegmenter:
         return tot_class_logprob + (tot_differentness_logprob +
                                     tot_sameness_logprob) * self.opts.object_merge_factor
 
-
     def compute_total_logprob(self):
         tot_class_logprob = 0
         tot_differentness_logprob = 0
@@ -347,17 +347,6 @@ class ObjectSegmenter:
             tot_differentness_logprob += arec.differentness_logprob
         return tot_class_logprob + (tot_differentness_logprob +
                                     tot_sameness_logprob) * self.opts.object_merge_factor
-
-    def visualize(self, iter):
-        img = np.zeros((self.img_height, self.img_width))
-        k = 1
-        for obj in self.objects.values():
-            for p in obj.pixels:
-                img[p] = k
-            center = tuple(np.array(list(obj.pixels)).mean(axis=0))
-            img[int(center[0]), int(center[1])] = 0.0
-            k += 1
-        scipy.misc.imsave('{}.png'.format(iter), img)
 
     def prune(self, threshold=200.0):
         # Find the biggest background object:
@@ -371,7 +360,8 @@ class ObjectSegmenter:
         for obj in self.objects.values():
             nonbackground_score = obj.class_logprob() - obj.class_logprobs[0]
             if self.verbose >= 2:
-                print("obj: {}   -->   {:0.2f}".format(len(obj.pixels), nonbackground_score))
+                print("obj: {}   -->   {:0.2f}".format(len(obj.pixels),
+                                                       nonbackground_score))
             if nonbackground_score < threshold and obj is not background_obj:
                 objects_to_be_merged.append(obj)
 

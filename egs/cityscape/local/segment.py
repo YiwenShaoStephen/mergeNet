@@ -12,11 +12,9 @@ import os
 import pickle
 import random
 import numpy as np
-import scipy.misc
-from models import fcn_resnet, fcn_vgg16
+import cv2
+from models import get_model
 from utils.segmenter import ObjectSegmenter, SegmenterOptions
-from skimage.transform import resize
-from utils.core_config import CoreConfig
 from utils.data_visualization import visualize_mask
 from utils.dataset import COCODataset, COCOTestset
 from pycocotools import mask as maskUtils
@@ -33,6 +31,10 @@ parser.add_argument('--dir', type=str, required=True,
 parser.add_argument('--segment', type=str, default='segment',
                     help='sub dir name under <args.dir> that segmentation results'
                     'will be stored to')
+parser.add_argument('--num-classes', default=9, type=int,
+                    help='number of classes')
+parser.add_argument('--num-offsets', default=10, type=int,
+                    help='number of offsets')
 parser.add_argument('--arch', default='fcn16s', type=str,
                     help='model architecture')
 parser.add_argument('--model', type=str, default='model_best.pth.tar',
@@ -77,93 +79,51 @@ def main():
     args = parser.parse_args()
     args.batch_size = 1  # only segment one image for experiment
 
-    core_config_path = os.path.join(args.dir, 'configs/core.config')
+    num_classes = args.num_classes
+    num_offsets = args.num_offsets
 
-    core_config = CoreConfig()
-    core_config.read(core_config_path)
-    print('Using core configuration from {}'.format(core_config_path))
-
-    offset_list = core_config.offsets
-    print("offsets are: {}".format(offset_list))
-
-    # model configurations from core config
-    num_classes = core_config.num_classes
-    num_colors = core_config.num_colors
-    num_offsets = len(core_config.offsets)
-
-    # if exists, class_nms is the list of class names we are going to detect
-    class_nms_file = os.path.join(args.dir, 'configs/subclass.txt')
-    if os.path.exists(class_nms_file):
-        with open(class_nms_file, 'r') as fh:
-            class_nms = fh.readline().split()
-            print('Segmenting on {} classes: {}'.format(
-                len(class_nms), class_nms))
-    else:
-        class_nms = None
-        print('Segmenting on all classes.')
-
-    # dataset
-    if 'train' or 'val' in args.ann_data:
-        testset = COCODataset(args.img, args.ann, core_config,
-                              mode=args.mode,
-                              class_nms=class_nms, limits=args.limits,
-                              job=args.job, num_jobs=args.num_jobs)
-    else:
-        testset = COCOTestset(args.img, args.ann, core_config)
-    print('Total samples in the dataset to be segmented: {0}'.format(
-        len(testset)))
-
-    catIds = testset.catIds
-
-    dataloader = torch.utils.data.DataLoader(
-        testset, num_workers=1, batch_size=args.batch_size)
-
-    # load model
     if args.mode == 'val':
-        # model
-        valid_archs = ['fcn{}_resnet{}'.format(x, y)
-                       for x in [8, 16, 32] for y in [18, 34, 50, 101, 152]]
-        valid_archs += ['fcn{}_vgg16'.format(x) for x in [8, 16, 32]]
-        valid_archs += ['unet']
-        if args.arch not in valid_archs:
-            raise ValueError('Supported models are: {} \n'
-                             'but given {}'.format(valid_archs, args.arch))
-        if args.arch == 'unet':
-            model = UNet(num_classes, num_offsets)
-        elif 'vgg16' in args.arch:
-            names = args.arch.split('_')
-            scale = int(names[0][3:])
-            model = fcn_vgg16(num_classes + num_offsets,
-                              scale=scale)
-        elif 'resnet' in args.arch:
-            names = args.arch.split('_')
-            scale = int(names[0][3:])
-            layer = int(names[1][6:])
-            model = fcn_resnet(num_classes + num_offsets,
-                               scale=scale, layer=layer)
-
+        model = get_model(num_classes, num_offsets, args.arch, pretrain=False)
         model_path = os.path.join(args.dir, args.model)
         if os.path.isfile(model_path):
             print("=> loading checkpoint '{}'".format(model_path))
             checkpoint = torch.load(model_path,
                                     map_location=lambda storage, loc: storage)
             model.load_state_dict(checkpoint['state_dict'])
+            offset_list = checkpoint['offset']
             print("loaded.")
+            print("offsets are: {}".format(offset_list))
         else:
             raise ValueError(
                 "=> no checkpoint found at '{}'".format(model_path))
-    else:
+    elif args.mode == 'oracle':
         model = None  # we don't need model in oracle mode
 
+    # dataset
+    if args.mode == 'val' or args.mode == 'oracle':
+        testset = COCODataset(args.img, args.ann, num_classes, offset_list,
+                              scale=args.scale,
+                              mode=args.mode,
+                              limits=args.limits,
+                              job=args.job, num_jobs=args.num_jobs)
+    elif args.mode == 'test':
+        testset = COCOTestset(args.img, args.ann)
+    print('Total samples in the dataset to be segmented: {0}'.format(
+        len(testset)))
+    dataloader = torch.utils.data.DataLoader(
+        testset, num_workers=1, batch_size=args.batch_size)
+
+    catIds = testset.catIds
     segment_dir = os.path.join(args.dir, args.segment)
-    if not os.path.exists(segment_dir):
-        os.makedirs(segment_dir)
-    segment(dataloader, segment_dir, model, core_config, catIds)
+    segment(dataloader, segment_dir, model,
+            num_classes, offset_list, catIds, args.mode)
 
 
-def segment(dataloader, segment_dir, model, core_config, catIds):
+def segment(dataloader, segment_dir, model, num_classes, offset_list, catIds, mode):
     if model:
         model.eval()  # convert the model into evaluation mode
+    if not os.path.exists(segment_dir):
+        os.makedirs(segment_dir)
     img_dir = os.path.join(segment_dir, 'img')
     pkl_dir = os.path.join(segment_dir, 'pkl')
     if not os.path.exists(img_dir):
@@ -172,9 +132,6 @@ def segment(dataloader, segment_dir, model, core_config, catIds):
         os.makedirs(pkl_dir)
     exist_ids = next(os.walk(pkl_dir))[2]
 
-    num_classes = core_config.num_classes
-    offset_list = core_config.offsets
-
     for i, vals in enumerate(dataloader):
         image_id = vals[0][0].item()
         img = vals[1]
@@ -182,71 +139,56 @@ def segment(dataloader, segment_dir, model, core_config, catIds):
         original_height, original_width = size[0].item(), size[1].item()
         if str(image_id) + '.pkl' in exist_ids:
             continue
-        if len(vals) == 3:  # 'val' mode, using model output to do segmentation
+        if mode == 'val':  # 'val' mode, using model output to do segmentation
             with torch.no_grad():
                 img_input = F.upsample(img,
                                        size=(args.train_image_size,
                                              args.train_image_size * 2),
                                        mode='bilinear', align_corners=True)
                 output = model(img_input)
-                output = F.upsample(output, size=(args.seg_size, args.seg_size * 2),
-                                    mode='bilinear', align_corners=True)
-                class_pred = output[:, :num_classes, :, :]
-                adj_pred = output[:, num_classes:, :, :]
-        elif len(vals) == 5:  # 'oracle' mode, using ground truth label to do segmentation
-            class_pred = vals[3]
-            adj_pred = vals[4]
-            class_pred = F.upsample(class_pred, size=(args.seg_size, args.seg_size * 2),
-                                    mode='bilinear', align_corners=True)
-            adj_pred = F.upsample(adj_pred, size=(args.seg_size, args.seg_size * 2),
-                                  mode='bilinear', align_corners=True)
-            import torchvision
-            for i in range(10):
-                torchvision.utils.save_image(
-                    adj_pred[:, i:i + 1, :, :], '{}/bound_{}.png'.format(segment_dir, i))
+                class_mask = output[:, :num_classes, :, :]
+                bound_mask = output[:, num_classes:, :, :]
+        elif mode == 'oracle':  # 'oracle' mode, using ground truth label to do segmentation
+            class_mask = vals[3][:, :num_classes, :, :]
+            bound_mask = vals[3][:, num_classes:, :, :]
 
         if args.object_merge_factor is None:
             args.object_merge_factor = 1.0 / len(offset_list)
             segmenter_opts = SegmenterOptions(same_different_bias=args.same_different_bias,
                                               object_merge_factor=args.object_merge_factor,
                                               merge_logprob_bias=args.merge_logprob_bias)
-        seg = ObjectSegmenter(class_pred[0].detach().numpy(),
-                              adj_pred[0].detach().numpy(),
+        seg = ObjectSegmenter(class_mask[0].detach().numpy(),
+                              bound_mask[0].detach().numpy(),
                               num_classes, offset_list,
                               segmenter_opts)
-        mask_pred, object_class = seg.run_segmentation()
+        mask, object_class = seg.run_segmentation()
 
         # resize the mask back to the original image size
-        mask_pred = resize(mask_pred, (original_height, original_width),
-                           order=0, preserve_range=True).astype(int)
-        image_with_mask = {}
-        image_with_mask['img'] = np.moveaxis(img[0].detach().numpy(), 0, -1)
-        image_with_mask['mask'] = mask_pred
-        image_with_mask['object_class'] = object_class
+        mask = cv2.resize(mask, (original_width, original_height),
+                          interpolation=cv2.INTER_NEAREST)
+        img = img[0].detach().numpy()
 
         # store segmentation result as image
         if args.visualize:
-            visual_mask = visualize_mask(image_with_mask, core_config)
-            scipy.misc.imsave(
-                '{}/{}.png'.format(img_dir, image_id), visual_mask)
+            masked_img = visualize_mask(img, mask, object_class)
+            cv2.imwrite('{}/{}.png'.format(img_dir, image_id),
+                        cv2.cvtColor(masked_img, cv2.COLOR_RGB2BGR))
 
         # store in coco format as pickle
-        result = convert_to_coco_result(image_with_mask, image_id, catIds)
+        result = convert_to_coco_result(mask, object_class, image_id, catIds)
         with open('{}/{}.pkl'.format(pkl_dir, image_id), 'wb') as fh:
             pickle.dump(result, fh)
 
 
-def convert_to_coco_result(image_with_mask, image_id, catIds):
-    """ This function accepts image_with_mask and convert it to coco results
-        image_with_mask: a dict, defined in data_types.ty
+def convert_to_coco_result(mask, object_class, image_id, catIds):
+    """ This function accepts mask and object_class, and convert it to coco results
         image_id: image id in COCO dataset
-        catIds: a list that the index is the class_id, value is the category id in COCO
+        catIds: a list that the index is the class_id, value is the category id in the
+        original dataset.
         return:
         results: a list of dictionaries that each dict represents an object instance
     """
     results = []
-    mask = image_with_mask['mask']
-    object_class = image_with_mask['object_class']
     num_objects = mask.max()
     for i in range(1, num_objects + 1):
         b_mask = (mask == i).astype('uint8')

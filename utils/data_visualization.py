@@ -7,21 +7,15 @@ import numpy as np
 from PIL import Image
 from io import BytesIO
 from scipy import ndimage
-from utils.data_types import validate_image_with_mask
 matplotlib.use('Agg')
 
 
-def visualize_mask(x, c, transparency=0.7, show_labels=True):
+def visualize_mask(img, mask, transparency=0.7, show_labels=True):
     """
-    This function accepts an object x that should represent an image with a
-    mask, a config class c, and a float 0 < transparency < 1.
-    It changes the image in-place by overlaying the mask with transparency
-    described by the parameter.
-    x['img_with_mask'] = image with transparent mask overlay
+    This function accepts a image, its mask and a float 0 < transparency < 1.
+    It overlays the mask on image with transparency described by the parameter.
     """
-    validate_image_with_mask(x, c)
-    im = x['img']
-    mask = x['mask']
+    im = np.moveaxis(img, 0, -1)
     plt.clf()
     plt.imshow(im)
     for i in range(1, mask.max() + 1):
@@ -41,6 +35,6 @@ def visualize_mask(x, c, transparency=0.7, show_labels=True):
     buffer_ = BytesIO()
     plt.savefig(buffer_, format="png")
     buffer_.seek(0)
-    image = Image.open(buffer_)
+    masked_img = Image.open(buffer_)
     buffer_.close()
-    return image
+    return masked_img

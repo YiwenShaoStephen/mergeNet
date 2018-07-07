@@ -6,17 +6,16 @@
     c * h * w and the output feature maps are of size (num_class + num_offset) * h * w
 """
 
-import sys
 import torch
 import argparse
 import os
 import random
-from models import UNet, FCNResnet, FCNVGG16, PSPNet, PSPFPNet
+from models import get_model
 import torch.optim.lr_scheduler as lr_scheduler
 from utils.dataset import COCODataset
 from utils.loss import CrossEntropyLossOneHot, SoftDiceLoss, MultiBCEWithLogitsLoss
-from utils.core_config import CoreConfig
-from utils.train_utils import train, validate, sample, save_checkpoint, soft_dice_loss, runningScore, offsetIoU
+from utils.train_utils import train, validate, sample, save_checkpoint, generate_offsets
+from utils.score import runningScore, offsetIoU
 
 
 parser = argparse.ArgumentParser(description='Pytorch cityscape setup')
@@ -31,12 +30,13 @@ parser.add_argument('--resume', default='', type=str,
 parser.add_argument('--print-freq', '-p', default=10, type=int,
                     help='print frequency (default: 10)')
 parser.add_argument('--log-freq', default=1000, type=int,
-                    help='log frequency is using tensorboard (default: 1000)')
+                    help='log frequency for tensorboard (default: 1000)')
 parser.add_argument('-b', '--batch-size', default=16, type=int,
                     help='mini-batch size (default: 16)')
 parser.add_argument('--train-image-size', default=None, type=int,
-                    help='The size of the parts of training images that we'
-                    'train on (in order to form a fixed minibatch size).')
+                    help='crop image size in train')
+parser.add_argument('--scale', default=1, type=int,
+                    help='downsample image scale factor')
 parser.add_argument('--loss', default='bce', type=str, choices=['bce', 'mbce', 'dice', 'ce'],
                     help='loss function')
 parser.add_argument('--alpha', default=1, type=float,
@@ -46,28 +46,28 @@ parser.add_argument('--lr', '--learning-rate', default=0.01, type=float,
 parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
 parser.add_argument('--milestones', default=None, nargs='+', type=int,
                     help='step decay position')
-parser.add_argument('--arch', default='fcn16s', type=str,
+parser.add_argument('--arch', default='pspfpnet', type=str,
                     help='model architecture')
+parser.add_argument('--num-classes', default=9, type=int,
+                    help='number of classes')
+parser.add_argument('--num-offsets', default=10, type=int,
+                    help='number of offsets')
 parser.add_argument('--nesterov', default=True,
                     type=bool, help='nesterov momentum')
-parser.add_argument('--weight-decay', '--wd', default=5e-4, type=float,
-                    help='weight decay (default: 5e-4)')
+parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
+                    help='weight decay (default: 1e-4)')
 parser.add_argument('--train-img', default='data/train', type=str,
                     help='Directory of training images')
 parser.add_argument('--val-img', default='data/val', type=str,
                     help='Directory of validation images')
-parser.add_argument('--train-ann',
+parser.add_argument('--train-ann', type=str,
                     default='data/annotations/instancesonly_filtered_gtFine_train.json',
                     help='Path to training set annotations')
-parser.add_argument('--val-ann',
+parser.add_argument('--val-ann', type=str,
                     default='data/annotations/instancesonly_filtered_gtFine_val.json',
                     help='Path to validation set annotations')
 parser.add_argument('--limits', default=None, type=int,
                     help="If given, is the size of subset we use for training")
-parser.add_argument('--class-name-file', default=None, type=str,
-                    help="If given, is the subclass we are going to detect/segment")
-parser.add_argument('--core-config', default='', type=str,
-                    help='path of core configuration file')
 parser.add_argument('--tensorboard',
                     help='Log progress to TensorBoard', action='store_true')
 parser.add_argument('--pretrain', help='use pretrained model on ImageNet',
@@ -90,83 +90,53 @@ def main():
         print("Using tensorboard")
         configure("%s" % (args.dir))
 
-    # loading core configuration
-    c_config = CoreConfig()
-    if args.core_config == '':
-        print('No core config file given, using default core configuration')
-    if not os.path.exists(args.core_config):
-        sys.exit('Cannot find the config file: {}'.format(args.core_config))
-    else:
-        c_config.read(args.core_config)
-        print('Using core configuration from {}'.format(args.core_config))
+    offset_list = generate_offsets(args.num_offsets)
 
-    offset_list = c_config.offsets
-    print("offsets are: {}".format(offset_list))
-
-    # model configurations from core config
-    num_classes = c_config.num_classes
-    num_offsets = len(c_config.offsets)
-
-    if args.class_name_file:
-        with open(args.class_name_file, 'r') as fh:
-            class_nms = fh.readline().split()
-            print('Training on {} classes: {}'.format(
-                len(class_nms), class_nms))
-    else:
-        class_nms = None
-        print('Training on all classes.')
-
-    # dataset
-    trainset = COCODataset(args.train_img, args.train_ann, c_config,
-                           (args.train_image_size, args.train_image_size),
-                           class_nms=class_nms, limits=args.limits, crop=args.crop)
-    trainloader = torch.utils.data.DataLoader(
-        trainset, num_workers=4, batch_size=args.batch_size, shuffle=True)
-    valset = COCODataset(args.val_img, args.val_ann, c_config,
-                         class_nms=class_nms, limits=args.limits)
-    valloader = torch.utils.data.DataLoader(
-        valset, num_workers=4, batch_size=4)
-    NUM_TRAIN = len(trainset)
-    NUM_VAL = len(valset)
-    print('Training samples: {0} \n'
-          'Validation samples: {1}'.format(NUM_TRAIN, NUM_VAL))
+    # model configurations
+    num_classes = args.num_classes
+    num_offsets = args.num_offsets
 
     # model
-    valid_archs = ['fcn{}_resnet{}'.format(x, y)
-                   for x in [8, 16, 32] for y in [18, 34, 50, 101, 152]]
-    valid_archs += ['fcn{}_vgg16'.format(x) for x in [8, 16, 32]]
-    valid_archs += ['unet']
-    valid_archs += ['pspnet']
-    valid_archs += ['pspfpnet']
-    if args.arch not in valid_archs:
-        raise ValueError('Supported models are: {} \n'
-                         'but given {}'.format(valid_archs, args.arch))
-    if args.arch == 'unet':
-        model = UNet(num_classes, num_offsets)
-    elif 'vgg16' in args.arch:
-        names = args.arch.split('_')
-        scale = int(names[0][3:])
-        model = FCNVGG16(num_classes + num_offsets,
-                         scale=scale, pretrained=args.pretrain)
-    elif 'resnet' in args.arch:
-        names = args.arch.split('_')
-        scale = int(names[0][3:])
-        layer = int(names[1][6:])
-        model = FCNResnet(num_classes + num_offsets,
-                          scale=scale, layer=layer, pretrained=args.pretrain)
-    elif 'pspnet' in args.arch:
-        layer = 101
-        model = PSPNet(num_classes + num_offsets,
-                       layer, pretrained=args.pretrain)
-    elif 'fpnet' in args.arch:
-        layer = 101
-        model = PSPFPNet(num_classes + num_offsets, layer,
-                         pretrained=args.pretrain)
+    model = get_model(num_classes, num_offsets, args.arch, args.pretrain)
     model = model.cuda()
 
-    # get the number of model parameters
-    print('Number of model parameters: {}'.format(
-        sum([p.data.nelement() for p in model.parameters()])))
+    # dataset
+    trainset = COCODataset(args.train_img, args.train_ann, num_classes, offset_list,
+                           scale=args.scale,
+                           size=(args.train_image_size, args.train_image_size),
+                           limits=args.limits, crop=args.crop)
+    trainloader = torch.utils.data.DataLoader(
+        trainset, num_workers=4, batch_size=args.batch_size, shuffle=True)
+    valset = COCODataset(args.val_img, args.val_ann,
+                         scale=args.scale, limits=args.limits)
+    valloader = torch.utils.data.DataLoader(
+        valset, num_workers=4, batch_size=4)
+    num_train = len(trainset)
+    num_val = len(valset)
+    print('Training samples: {0} \n'
+          'Validation samples: {1}'.format(num_train, num_val))
+
+    # define optimizer
+    optimizer = torch.optim.SGD(model.parameters(), args.lr,
+                                momentum=args.momentum, nesterov=args.nesterov,
+                                weight_decay=args.weight_decay)
+
+    # optionally resume from a checkpoint
+    if args.resume:
+        if os.path.isfile(args.resume):
+            print("=> loading checkpoint '{}'".format(args.resume))
+            checkpoint = torch.load(args.resume)
+            args.start_epoch = checkpoint['epoch']
+            best_iou = checkpoint['best_iou']
+            model.load_state_dict(checkpoint['state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            offset_list = checkpoint['offset']
+            print("=> loaded checkpoint '{}' (epoch {})"
+                  .format(args.resume, checkpoint['epoch']))
+        else:
+            raise ValueError(
+                "=> no checkpoint found at '{}'".format(args.resume))
+    print("offsets are: {}".format(offset_list))
 
     # define loss functions
     if args.loss == 'bce':
@@ -183,26 +153,6 @@ def main():
         criterion_cls = CrossEntropyLossOneHot().cuda()
 
     criterion_ofs = torch.nn.BCEWithLogitsLoss().cuda()
-
-    # define optimizer
-    optimizer = torch.optim.SGD(model.parameters(), args.lr,
-                                momentum=args.momentum, nesterov=args.nesterov,
-                                weight_decay=args.weight_decay)
-
-    # optionally resume from a checkpoint
-    if args.resume:
-        if os.path.isfile(args.resume):
-            print("=> loading checkpoint '{}'".format(args.resume))
-            checkpoint = torch.load(args.resume)
-            args.start_epoch = checkpoint['epoch']
-            best_iou = checkpoint['best_iou']
-            model.load_state_dict(checkpoint['state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(args.resume, checkpoint['epoch']))
-        else:
-            raise ValueError(
-                "=> no checkpoint found at '{}'".format(args.resume))
 
     # define learning rate scheduler
     if not args.milestones:
@@ -246,7 +196,7 @@ def main():
             outdir = '{}/imgs/{}'.format(args.dir, epoch + 1)
             if not os.path.exists(outdir):
                 os.makedirs(outdir)
-            sample(model, valloader, outdir, c_config)
+            sample(model, valloader, outdir)
 
         is_best = val_iou > best_iou
         best_iou = max(val_iou, best_iou)
@@ -255,6 +205,7 @@ def main():
             'state_dict': model.state_dict(),
             'best_iou': best_iou,
             'optimizer': optimizer.state_dict(),
+            'offset': offset_list,
         }, is_best)
     print('Best validation mean iou: ', best_iou)
 
