@@ -183,14 +183,14 @@ class COCODataset:
             diff = height - h
             top_pad = int(diff / 2)
             bot_pad = diff - top_pad
-            img = np.pad(img, ((top_pad, bot_pad), (0, 0), (0, 0)), 'constant')
+            img = np.pad(img, ((0, 0), (top_pad, bot_pad), (0, 0)), 'constant')
             mask = np.pad(mask, ((top_pad, bot_pad), (0, 0)), 'constant')
         if w < width:
             diff = width - w
             left_pad = int(diff / 2)
             right_pad = diff - left_pad
             img = np.pad(
-                img, ((0, 0), (left_pad, right_pad), (0, 0)), 'constant')
+                img, ((0, 0), (0, 0), (left_pad, right_pad)), 'constant')
             mask = np.pad(mask, ((0, 0), (left_pad, right_pad)), 'constant')
 
         c, h, w = img.shape
@@ -213,16 +213,17 @@ class COCODataset:
             diff = height - h
             top_pad = int(diff / 2)
             bot_pad = diff - top_pad
-            img = np.pad(img, ((top_pad, bot_pad), (0, 0), (0, 0)), 'constant')
-            target = np.pad(target, ((top_pad, bot_pad), (0, 0)), 'constant')
+            img = np.pad(img, ((0, 0), (top_pad, bot_pad), (0, 0)), 'constant')
+            target = np.pad(
+                target, ((0, 0), (top_pad, bot_pad), (0, 0)), 'constant')
         if w < width:
             diff = width - w
             left_pad = int(diff / 2)
             right_pad = diff - left_pad
             img = np.pad(
-                img, ((0, 0), (left_pad, right_pad), (0, 0)), 'constant')
+                img, ((0, 0), (0, 0), (left_pad, right_pad)), 'constant')
             target = np.pad(
-                target, ((0, 0), (left_pad, right_pad)), 'constant')
+                target, ((0, 0), (0, 0), (left_pad, right_pad)), 'constant')
 
         c, h, w = img.shape
         top = np.random.randint(0, h - height + 1)
