@@ -31,6 +31,8 @@ parser.add_argument('--print-freq', '-p', default=10, type=int,
                     help='print frequency (default: 10)')
 parser.add_argument('--log-freq', default=1000, type=int,
                     help='log frequency for tensorboard (default: 1000)')
+parser.add_argument('--num-gpus', default=1, type=int,
+                    help='number of gpus')
 parser.add_argument('-b', '--batch-size', default=16, type=int,
                     help='mini-batch size (default: 16)')
 parser.add_argument('--train-image-size', default=None, type=int,
@@ -98,7 +100,7 @@ def main():
 
     # model
     model = get_model(num_classes, num_offsets, args.arch, args.pretrain)
-    model = model.cuda()
+    model = torch.nn.DataParallel(model, device_ids=range(args.num_gpus))
 
     # dataset
     trainset = COCODataset(args.train_img, args.train_ann, num_classes, offset_list,

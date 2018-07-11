@@ -10,6 +10,7 @@ dir=exp/crop/pspfpnet101_alpha20
 
 echo "$0: Training the network....."
 python3 local/train.py \
+	--num-gpus 4 \
 	--epochs $epochs \
 	--train-image-size $train_image_size \
 	--alpha 20 \
