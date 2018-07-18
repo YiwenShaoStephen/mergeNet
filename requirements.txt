@@ -1,5 +1,7 @@
 tensorboard_logger
+opencv_python
+tqdm
+Cython
 scipy
 numpy
 torch>=0.4.0
-opencv_python>=3.4.1.15

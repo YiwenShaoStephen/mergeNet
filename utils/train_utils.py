@@ -10,6 +10,7 @@ import shutil
 import time
 import math
 import torch
+import torch.nn.functional as F
 import torchvision
 from tensorboard_logger import log_value
 
@@ -59,9 +60,11 @@ def train(trainloader, model, criterion_cls, criterion_ofs, optimizer,
         iterations += 1
 
         if score_metrics:
-            score_metrics.update(output[:, :n_classes, :, :], class_mask)
+            score_metrics.update(
+                F.sigmoid(output[:, :n_classes, :, :]), class_mask)
         if offset_metrics:
-            offset_metrics.update(output[:, n_classes:, :, :], bound_mask)
+            offset_metrics.update(
+                F.sigmoid(output[:, n_classes:, :, :]), bound_mask)
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -138,9 +141,11 @@ def validate(validateloader, model, criterion_cls, criterion_ofs,
             all_losses.update(all_loss.item(), batch_size)
 
             if score_metrics:
-                score_metrics.update(output[:, :n_classes, :, :], class_mask)
+                score_metrics.update(
+                    F.sigmoid(output[:, :n_classes, :, :]), class_mask)
             if offset_metrics:
-                offset_metrics.update(output[:, n_classes:, :, :], bound_mask)
+                offset_metrics.update(
+                    F.sigmoid(output[:, n_classes:, :, :]), bound_mask)
 
             # measure elapsed time
             batch_time.update(time.time() - end)
@@ -196,7 +201,7 @@ def sample(num_classes, num_offsets, model, dataloader, outdir):
     if next(model.parameters()).is_cuda:
         img = img.cuda()
     with torch.no_grad():
-        predictions = model(img)
+        predictions = F.sigmoid(model(img))
     predictions = predictions.detach()
     class_pred = predictions[:, :num_classes, :, :]
     bound_pred = predictions[:, num_classes:, :, :]
@@ -237,20 +242,6 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
-
-
-class soft_dice_loss(torch.nn.Module):
-    def __init__(self, smooth=1):
-        super(soft_dice_loss, self).__init__()
-        self.smooth = smooth
-
-    def forward(self, inputs, targets):
-        iflat = inputs.view(-1)
-        tflat = targets.view(-1)
-        intersection = (iflat * tflat)
-        loss = 1 - (2. * intersection.sum() + self.smooth) / \
-            (iflat.sum() + tflat.sum() + self.smooth)
-        return loss
 
 
 def generate_offsets(num_offsets=15):

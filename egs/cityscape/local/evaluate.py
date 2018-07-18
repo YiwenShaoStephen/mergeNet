@@ -9,6 +9,7 @@ import pickle
 import argparse
 from pycocotools.cocoeval import COCOeval
 from pycocotools.coco import COCO
+from pycocotools import mask as maskUtils
 
 parser = argparse.ArgumentParser(description='scoring script for COCO dataset')
 parser.add_argument('--segment-dir', type=str, required=True,
@@ -49,7 +50,10 @@ def evaluate(coco, segment_dir, class_nms, imgid=None):
     for pkl_file in pkl_files:
         with open('{}/{}'.format(pkl_dir, pkl_file), 'rb') as fh:
             result = pickle.load(fh)
-            results.extend(result)
+            for r in result:
+                area = maskUtils.area(r['segmentation'])
+                if area > 0:
+                    results.append(r)
             if not imgid:
                 # imgId should be int instead of str
                 imgId = int(pkl_file.split('.')[0])
@@ -57,6 +61,11 @@ def evaluate(coco, segment_dir, class_nms, imgid=None):
 
     print('Evaluating on {} images: {}'.format(len(imgIds), imgIds))
     coco_results = coco.loadRes(results)
+    # annIds = coco_results.getAnnIds(imgIds=imgIds, iscrowd=None)
+    # print(annIds)
+    # anns = coco_results.loadAnns(annIds)
+    # for i, ann in enumerate(anns):
+    #     print('{} \t{} \t {}'.format(i, ann['category_id'], ann['area']))
     cocoEval = COCOeval(coco, coco_results, 'segm')
     cocoEval.params.imgIds = imgIds
     if class_nms:

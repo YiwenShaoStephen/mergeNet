@@ -5,7 +5,6 @@
 """ This script provides scoring metrics.
 """
 import numpy as np
-import torch.nn.functional as F
 
 
 class runningScore(object):
@@ -78,7 +77,7 @@ class offsetIoU(object):
     def update(self, pred, gt):
         # 1-0 convert
         for i in range(self.num_offsets):
-            pflat = (1 - F.sigmoid(pred[:, i, :, :])
+            pflat = (1 - pred[:, i, :, :]
                      ).detach().cpu().contiguous().view(-1).numpy()
             gflat = (1 - gt[:, i, :, :]
                      ).detach().cpu().contiguous().view(-1).numpy()

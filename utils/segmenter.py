@@ -475,8 +475,8 @@ class ObjectSegmenter:
         if len(self.queue) == 0:
             print("Finished. Queue is empty.")
 
+        self.prune()
         self.show_stats()
-        self.visualize('final')
         if self.verbose >= 1:
             print("Final logprob from scratch: {}".format(
                 self.compute_total_logprob_from_scratch()))

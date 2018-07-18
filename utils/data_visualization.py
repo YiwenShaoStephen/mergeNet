@@ -2,12 +2,13 @@
 
 # Apache 2.0
 import matplotlib
+matplotlib.use('Agg')
+
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 from io import BytesIO
 from scipy import ndimage
-matplotlib.use('Agg')
 
 
 def visualize_mask(img, mask, transparency=0.7, show_labels=True):
@@ -36,5 +37,6 @@ def visualize_mask(img, mask, transparency=0.7, show_labels=True):
     plt.savefig(buffer_, format="png")
     buffer_.seek(0)
     masked_img = Image.open(buffer_)
+    masked_img = np.array(masked_img)
     buffer_.close()
     return masked_img
