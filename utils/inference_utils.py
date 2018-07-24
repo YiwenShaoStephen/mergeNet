@@ -15,10 +15,12 @@ from utils.score import runningScore, offsetIoU
 
 
 def class_inference(dataloader, exp_dir, model, n_classes, batch_size, print_freq=10,
-                    score=False, class_nms=None, class_map=None, tile_predict=False, gpu=False):
+                    score=False, class_nms=None, tile_predict=False, gpu=False):
     """Perform class inference on the dataset"""
     batch_time = AverageMeter()
 
+    if gpu:
+        model = model.cuda()
     # switch to evaluate mode
     model.eval()
     if score:
@@ -41,14 +43,6 @@ def class_inference(dataloader, exp_dir, model, n_classes, batch_size, print_fre
                 output = model(img)
                 output = F.sigmoid(output)
 
-            # re-map class id to fit with the dataset loader
-            if class_map:
-                output_mapped = torch.zeros(output.shape)
-                for j in range(len(class_map)):
-                    new_id = class_map[j]
-                    output_mapped[:, new_id, :, :] = output[:, j, :, :]
-                output = output_mapped
-
             if score:
                 score_metrics.update(output, class_mask)
 
@@ -64,6 +58,9 @@ def class_inference(dataloader, exp_dir, model, n_classes, batch_size, print_fre
                 print('Val: [{0}/{1}]\t'
                       'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'.format(
                           i, len(dataloader), batch_time=batch_time))
+                if score:
+                    score, class_iou = score_metrics.get_scores()
+                    score_metrics.print_stat()
 
     if score:
         score, class_iou = score_metrics.get_scores()
@@ -76,6 +73,8 @@ def offset_inference(dataloader, exp_dir, model, offset_list, batch_size,
     batch_time = AverageMeter()
     n_offsets = len(offset_list)
 
+    if gpu:
+        model = model.cuda()
     # switch to evaluate mode
     model.eval()
 

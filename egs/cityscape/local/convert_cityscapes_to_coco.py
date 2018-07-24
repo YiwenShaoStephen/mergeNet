@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-""" Script for convert cityscape annotations to coco format. It is from facebook's detectron:
+""" Script for convert cityscape annotations to coco format. It is adapted from facebook's detectron:
     https://github.com/facebookresearch/Detectron/blob/master/tools/convert_cityscapes_to_coco.py
 """
 
@@ -93,8 +93,6 @@ def convert_cityscapes_instance_only(
     ends_in = '%s_polygons.json'
     img_id = 0
     ann_id = 0
-    cat_id = 1
-    category_dict = {}
 
     category_instancesonly = [
         'person',
@@ -120,7 +118,8 @@ def convert_cityscapes_instance_only(
                     if len(images) % 50 == 0:
                         print("Processed %s images, %s annotations" % (
                             len(images), len(annotations)))
-                    json_ann = json.load(open(os.path.join(root, filename)))
+                    json_ann = json.load(
+                        open(os.path.join(root, filename)))
                     image = {}
                     image['id'] = img_id
                     img_id += 1
@@ -143,13 +142,16 @@ def convert_cityscapes_instance_only(
                             continue  # skip non-instance categories
 
                         for obj in objects[object_cls]:
+                            remove_list = []
+                            for p in obj['contours']:
+                                if len(p) <= 4:
+                                    remove_list.append(p)
+                            for remove_p in remove_list:
+                                obj['contours'].remove(remove_p)
+                                print('Warning: invalid contours removed in {}: {}'.format(
+                                    ann_id, remove_p))
                             if obj['contours'] == []:
-                                # print('Warning: empty contours.')
-                                continue  # skip non-instance categories
-
-                            len_p = [len(p) for p in obj['contours']]
-                            if min(len_p) <= 4:
-                                # print('Warning: invalid contours.')
+                                print('Warning: empty contours.')
                                 continue  # skip non-instance categories
 
                             ann = {}
@@ -157,11 +159,8 @@ def convert_cityscapes_instance_only(
                             ann_id += 1
                             ann['image_id'] = image['id']
                             ann['segmentation'] = obj['contours']
-
-                            if object_cls not in category_dict:
-                                category_dict[object_cls] = cat_id
-                                cat_id += 1
-                            ann['category_id'] = category_dict[object_cls]
+                            ann['category_id'] = category_instancesonly.index(
+                                object_cls) + 1
                             ann['iscrowd'] = 0
                             ann['area'] = obj['pixelCount']
                             # ann['bbox'] = bboxs_util.xyxy_to_xywh(
@@ -171,8 +170,8 @@ def convert_cityscapes_instance_only(
                             annotations.append(ann)
 
         ann_dict['images'] = images
-        categories = [{"id": category_dict[name], "name": name} for name in
-                      category_dict]
+        categories = [{"id": category_instancesonly.index(name) + 1, "name": name} for name in
+                      category_instancesonly]
         ann_dict['categories'] = categories
         ann_dict['annotations'] = annotations
         print("Num categories: %s" % len(categories))

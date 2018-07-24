@@ -22,6 +22,10 @@ parser = argparse.ArgumentParser(
     description='Pytorch cityscapes instance segmentation setup')
 parser.add_argument('--dir', type=str, required=True,
                     help='Experiment directory')
+parser.add_argument('--class-dir', type=str, required=True,
+                    help='directory of class output numpy arrays')
+parser.add_argument('--offset-dir', type=str, required=True,
+                    help='directory of offset output numpy arrays')
 parser.add_argument('--img', type=str, default='data/val',
                     help='test images directory')
 parser.add_argument('--ann', type=str,
@@ -100,8 +104,9 @@ def segment(dataloader, segment_dir, num_classes, offset_list, seg_size, catIds)
         image_id = image_id.item()
         if str(image_id) + '.pkl' in exist_ids:
             continue
-        class_filename = '{}/npy/{}.class.npy'.format(args.dir, image_id)
-        offset_filename = '{}/npy/{}.offset.npy'.format(args.dir, image_id)
+        class_filename = '{}/npy/{}.class.npy'.format(args.class_dir, image_id)
+        offset_filename = '{}/npy/{}.offset.npy'.format(
+            args.offset_dir, image_id)
         class_mask = np.load(class_filename)
         bound_mask = np.load(offset_filename)
         if seg_size:

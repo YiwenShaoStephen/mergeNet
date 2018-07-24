@@ -546,7 +546,7 @@ class pspnet(nn.Module):
 
                     psub = torch.from_numpy(psub)
                     psub_background = psub[:, :n_classes -
-                                           n_instance_classes + 1, :, :].max(dim=1)
+                                           n_instance_classes + 1, :, :].max(dim=1)[0]
                     psub_instance = torch.zeros(
                         n_samples, n_instance_classes, side_x, side_y)
                     psub_instance[:, 0, :, :] = psub_background

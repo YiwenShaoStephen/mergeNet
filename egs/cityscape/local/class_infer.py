@@ -22,8 +22,7 @@ parser.add_argument('--ann', type=str,
                     help='path to test annotation or info file')
 parser.add_argument('--arch', type=str, default=None,
                     help='model architecture')
-parser.add_argument('--gpu', type=int, default=-1, nargs='+',
-                    help='gpu ids',
+parser.add_argument('--gpu', help='use gpu',
                     action='store_true')
 parser.add_argument('--score', help='do scoring when inference',
                     action='store_true')
@@ -63,22 +62,14 @@ def main():
     dataloader = torch.utils.data.DataLoader(
         valset, num_workers=0, batch_size=args.batch_size)
 
-    if args.caffe:  # re-map class id and do tile prediction
-        class_map = [0, 1, 7, 6, 4, 3, 8, 2, 5]
+    if args.caffe:  # do tile prediction
         tile_predict = True
     else:
-        class_map = None
         tile_predict = False
 
-    if args.gpu != -1:
-        model = torch.nn.DataParallel(model, device_ids=args.gpu)
-        use_gpu = True
-    else:
-        use_gpu = False
-
     class_inference(dataloader, args.dir, model, num_classes, args.batch_size,
-                    score=args.score, class_nms=valset.catNms, class_map=class_map,
-                    tile_predict=tile_predict, gpu=use_gpu)
+                    score=args.score, class_nms=valset.catNms,
+                    tile_predict=tile_predict, gpu=args.gpu)
 
 
 if __name__ == '__main__':

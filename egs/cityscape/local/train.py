@@ -12,10 +12,9 @@ import os
 import random
 from models import get_model
 import torch.optim.lr_scheduler as lr_scheduler
-from utils.dataset import COCODataset
+from utils.dataset import AllDataset, ClassDataset, OffsetDataset
 from utils.loss import CrossEntropyLossOneHot, SoftDiceLoss, MultiBCEWithLogitsLoss
 from utils.train_utils import train, validate, sample, save_checkpoint, generate_offsets
-from utils.score import runningScore, offsetIoU
 
 
 parser = argparse.ArgumentParser(description='Pytorch cityscape setup')
@@ -31,11 +30,16 @@ parser.add_argument('--print-freq', '-p', default=10, type=int,
                     help='print frequency (default: 10)')
 parser.add_argument('--log-freq', default=1000, type=int,
                     help='log frequency for tensorboard (default: 1000)')
+parser.add_argument('--visual-freq', default=0, type=int,
+                    help='visualize network output every n epochs')
 parser.add_argument('--gpu', default=-1, type=int, nargs='+',
                     help='gpu ids')
 parser.add_argument('-b', '--batch-size', default=16, type=int,
                     help='mini-batch size (default: 16)')
-parser.add_argument('--train-image-size', default=None, type=int,
+parser.add_argument('--mode', default='all', type=str,
+                    choices=['all', 'class', 'offset'],
+                    help='training mode')
+parser.add_argument('--crop-size', default=None, type=int,
                     help='crop image size in train')
 parser.add_argument('--scale', default=1, type=int,
                     help='downsample image scale factor')
@@ -74,9 +78,9 @@ parser.add_argument('--tensorboard',
                     help='Log progress to TensorBoard', action='store_true')
 parser.add_argument('--pretrain', help='use pretrained model on ImageNet',
                     action='store_true')
-parser.add_argument('--visualize', help='Visualize network output after each epoch',
-                    action='store_true')
 parser.add_argument('--crop', help='Use cropped train images',
+                    action='store_true')
+parser.add_argument('--score', help='Use score metrics in training',
                     action='store_true')
 
 best_iou = 0
@@ -92,26 +96,51 @@ def main():
         print("Using tensorboard")
         configure("%s" % (args.dir))
 
-    offset_list = generate_offsets(args.num_offsets)
-
     # model configurations
     num_classes = args.num_classes
     num_offsets = args.num_offsets
+    if args.mode == 'offset':  # offset only
+        num_classes = 0
+    if args.mode == 'class':  # class only
+        num_offsets = 0
 
     # model
     model = get_model(num_classes, num_offsets, args.arch, args.pretrain)
     if args.gpu != -1:
         model = torch.nn.DataParallel(model, device_ids=args.gpu)
+        model.cuda()
 
     # dataset
-    trainset = COCODataset(args.train_img, args.train_ann, num_classes, offset_list,
-                           scale=args.scale,
-                           size=(args.train_image_size, args.train_image_size),
-                           limits=args.limits, crop=args.crop)
+    if args.mode == 'all':
+        offset_list = generate_offsets(args.num_offsets)
+        trainset = AllDataset(args.train_img, args.train_ann, num_classes, offset_list,
+                              scale=args.scale, crop=args.crop,
+                              crop_size=(args.crop_size, args.crop_size),
+                              limits=args.limits)
+        valset = AllDataset(args.val_img, args.val_ann, num_classes, offset_list,
+                            scale=args.scale, limits=args.limits)
+        class_nms = trainset.catNms
+    elif args.mode == 'class':
+        offset_list = None
+        trainset = ClassDataset(args.train_img, args.train_ann,
+                                scale=args.scale, crop=args.crop,
+                                crop_size=(args.crop_size, args.crop_size),
+                                limits=args.limits)
+        valset = ClassDataset(args.val_img, args.val_ann,
+                              scale=args.scale, limits=args.limits)
+        class_nms = trainset.catNms
+    elif args.mode == 'offset':
+        offset_list = generate_offsets(args.num_offsets)
+        trainset = OffsetDataset(args.train_img, args.train_ann, offset_list,
+                                 scale=args.scale, crop=args.crop,
+                                 crop_size=(args.crop_size, args.crop_size),
+                                 limits=args.limits)
+        valset = OffsetDataset(args.val_img, args.val_ann, offset_list,
+                               scale=args.scale, limits=args.limits)
+        class_nms = None
+
     trainloader = torch.utils.data.DataLoader(
         trainset, num_workers=4, batch_size=args.batch_size, shuffle=True)
-    valset = COCODataset(args.val_img, args.val_ann, num_classes, offset_list,
-                         scale=args.scale, limits=args.limits)
     valloader = torch.utils.data.DataLoader(
         valset, num_workers=4, batch_size=4)
     num_train = len(trainset)
@@ -133,29 +162,40 @@ def main():
             best_iou = checkpoint['best_iou']
             model.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
-            offset_list = checkpoint['offset']
+            if 'offset' in checkpoint:  # class mode doesn't has offset
+                offset_list = checkpoint['offset']
+                print("offsets are: {}".format(offset_list))
             print("=> loaded checkpoint '{}' (epoch {})"
                   .format(args.resume, checkpoint['epoch']))
         else:
             raise ValueError(
                 "=> no checkpoint found at '{}'".format(args.resume))
-    print("offsets are: {}".format(offset_list))
 
-    # define loss functions
-    if args.loss == 'bce':
-        print('Using Binary Cross Entropy Loss')
+    # # define loss functions
+    # if args.loss == 'bce':
+    #     print('Using Binary Cross Entropy Loss')
+    #     criterion_cls = torch.nn.BCEWithLogitsLoss().cuda()
+    # elif args.loss == 'mbce':
+    #     print('Using Weighted Multiclass BCE Loss')
+    #     criterion_cls = MultiBCEWithLogitsLoss().cuda()
+    # elif args.loss == 'dice':
+    #     print('Using Soft Dice Loss')
+    #     criterion_cls = SoftDiceLoss().cuda()
+    # else:
+    #     print('Using Cross Entropy Loss')
+    #     criterion_cls = CrossEntropyLossOneHot().cuda()
+
+    # criterion_ofs = torch.nn.BCEWithLogitsLoss().cuda()
+
+    if args.mode == 'all':
         criterion_cls = torch.nn.BCEWithLogitsLoss().cuda()
-    elif args.loss == 'mbce':
-        print('Using Weighted Multiclass BCE Loss')
-        criterion_cls = MultiBCEWithLogitsLoss().cuda()
-    elif args.loss == 'dice':
-        print('Using Soft Dice Loss')
-        criterion_cls = SoftDiceLoss().cuda()
-    else:
-        print('Using Cross Entropy Loss')
-        criterion_cls = CrossEntropyLossOneHot().cuda()
-
-    criterion_ofs = torch.nn.BCEWithLogitsLoss().cuda()
+        criterion_ofs = torch.nn.BCEWithLogitsLoss().cuda()
+    elif args.mode == 'class':
+        criterion_cls = torch.nn.BCEWithLogitsLoss().cuda()
+        criterion_ofs = None
+    elif args.mode == 'offset':
+        criterion_cls = None
+        criterion_ofs = torch.nn.BCEWithLogitsLoss().cuda()
 
     # define learning rate scheduler
     if not args.milestones:
@@ -168,48 +208,46 @@ def main():
     # start iteration count
     iterations = args.start_epoch * int(len(trainset) / args.batch_size)
 
-    # define score metrics
-    score_metrics_train = runningScore(num_classes, trainset.catNms)
-    score_metrics = runningScore(num_classes, valset.catNms)
-    offset_metrics_train = offsetIoU(offset_list)
-    offset_metrics_val = offsetIoU(offset_list)
-
     # train
     for epoch in range(args.start_epoch, args.epochs):
         scheduler.step()
-        iterations = train(trainloader, model, criterion_cls, criterion_ofs,
-                           optimizer, num_classes,
+        iterations = train(trainloader, model, optimizer,
                            args.batch_size, epoch, iterations,
+                           criterion_cls=criterion_cls, class_nms=class_nms,
+                           criterion_ofs=criterion_ofs, offset_list=offset_list,
                            print_freq=args.print_freq,
                            log_freq=args.log_freq,
                            tensorboard=args.tensorboard,
-                           score_metrics=score_metrics_train,
-                           offset_metrics=offset_metrics_train,
+                           score=args.score,
                            alpha=args.alpha)
-        val_iou = validate(valloader, model, criterion_cls, criterion_ofs,
-                           num_classes, args.batch_size, epoch, iterations,
+        val_iou = validate(valloader, model,
+                           args.batch_size, epoch, iterations,
+                           criterion_cls=criterion_cls, class_nms=class_nms,
+                           criterion_ofs=criterion_ofs, offset_list=offset_list,
                            print_freq=args.print_freq,
                            log_freq=args.log_freq,
                            tensorboard=args.tensorboard,
-                           score_metrics=score_metrics,
-                           offset_metrics=offset_metrics_val,
+                           score=args.score,
                            alpha=args.alpha)
         # visualize some example outputs after each epoch
-        if args.visualize:
-            outdir = '{}/imgs/{}'.format(args.dir, epoch + 1)
+        if args.visual_freq > 0 and epoch % args.visual_freq == 0:
+            outdir = '{}/imgs/{}'.format(args.dir, epoch)
             if not os.path.exists(outdir):
                 os.makedirs(outdir)
-            sample(num_classes, num_offsets, model, valloader, outdir)
+            sample(model, valloader, outdir, num_classes,
+                   num_offsets)
 
         is_best = val_iou > best_iou
         best_iou = max(val_iou, best_iou)
-        save_checkpoint(args.dir, {
-            'epoch': epoch + 1,
-            'state_dict': model.state_dict(),
-            'best_iou': best_iou,
-            'optimizer': optimizer.state_dict(),
-            'offset': offset_list,
-        }, is_best)
+        state_dict = {'epoch': epoch + 1,
+                      'state_dict': model.state_dict(),
+                      'best_iou': best_iou,
+                      'optimizer': optimizer.state_dict()
+                      }
+        if args.mode != 'class':
+            state_dict['offset'] = offset_list
+        save_checkpoint(args.dir, state_dict, is_best)
+
     print('Best validation mean iou: ', best_iou)
 
 

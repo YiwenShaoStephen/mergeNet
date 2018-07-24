@@ -98,7 +98,8 @@ class AllDataset:
             img, mask = resize_image_and_mask(img, mask, self.scale)
         # crop image and mask if needed
         if self.crop and not self.cache:  # do crop later if cache=True
-            img, mask = crop_image_and_mask(img, mask, self.crop_size)
+            img, mask = crop_image_and_mask(
+                img, mask, self.crop_size[0], self.crop_size[1])
 
         target = self.__mask_to_target(mask, object_class)
         return img, target

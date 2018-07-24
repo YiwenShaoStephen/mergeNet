@@ -24,8 +24,8 @@ parser.add_argument('--ann', type=str,
 parser.add_argument('--mode', type=str, default='val')
 parser.add_argument('--arch', type=str, default=None,
                     help='model architecture')
-parser.add_argument('--gpu', type=int, default=-1, nargs='+',
-                    help='gpu ids')
+parser.add_argument('--gpu', help='use gpu',
+                    action='store_true')
 parser.add_argument('--score', help='do scoring when inference',
                     action='store_true')
 
@@ -54,14 +54,8 @@ def main():
     dataloader = torch.utils.data.DataLoader(
         valset, num_workers=0, batch_size=args.batch_size)
 
-    if args.gpu != -1:
-        model = torch.nn.DataParallel(model, device_ids=args.gpu)
-        use_gpu = True
-    else:
-        use_gpu = False
-
     offset_inference(dataloader, args.dir, model, offset_list,
-                     args.batch_size, score=args.score, gpu=use_gpu)
+                     args.batch_size, score=args.score, gpu=args.gpu)
 
 
 if __name__ == '__main__':
