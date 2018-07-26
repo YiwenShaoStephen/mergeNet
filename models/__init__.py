@@ -30,7 +30,7 @@ def get_model(num_classes, num_offsets, arch, pretrain=False):
         model = FCNResnet(num_classes + num_offsets,
                           scale=scale, layer=layer, pretrained=pretrain)
     elif 'fpnet' in arch:
-        layer = 101
+        layer = 50
         model = PSPFPNet(num_classes + num_offsets, layer,
                          pretrained=pretrain)
     elif 'pspnet' in arch:

@@ -99,7 +99,7 @@ class AllDataset:
         # crop image and mask if needed
         if self.crop and not self.cache:  # do crop later if cache=True
             img, mask = crop_image_and_mask(
-                img, mask, self.crop_size[0], self.crop_size[1])
+                img, mask, self.crop_size, self.crop_size)
 
         target = self.__mask_to_target(mask, object_class)
         return img, target
@@ -249,7 +249,7 @@ class OffsetDataset:
         # crop image and mask if needed
         if self.crop and not self.cache:  # Note: we will do crop later if cache=True
             img, mask = crop_image_and_mask(
-                img, mask, self.crop_size[0], self.crop_size[1])
+                img, mask, self.crop_size, self.crop_size)
 
         target = self.__mask_to_target(mask)
         return img, target

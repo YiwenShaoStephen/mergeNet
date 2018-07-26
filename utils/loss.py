@@ -69,3 +69,14 @@ class MultiBCEWithLogitsLoss(_Loss):
         weight = weight * target + (1 - target)
         return F.binary_cross_entropy_with_logits(input, target,
                                                   weight, self.size_average, self.reduce)
+
+
+class WeightedBCEWithLogitsLoss(_Loss):
+    def __init__(self, size_average=True, reduce=True, alpha=0.5):
+        super(WeightedBCEWithLogitsLoss, self).__init__(size_average, reduce)
+        self.alpha = alpha
+
+    def forward(self, input, target):
+        weight = self.alpha * target + (1 - self.alpha) * (1 - target)
+        return F.binary_cross_entropy_with_logits(input, target,
+                                                  weight, self.size_average, self.reduce)

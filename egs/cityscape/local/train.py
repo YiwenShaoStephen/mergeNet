@@ -133,7 +133,7 @@ def main():
         offset_list = generate_offsets(args.num_offsets)
         trainset = OffsetDataset(args.train_img, args.train_ann, offset_list,
                                  scale=args.scale, crop=args.crop,
-                                 crop_size=(args.crop_size, args.crop_size),
+                                 crop_size=args.crop_size,
                                  limits=args.limits)
         valset = OffsetDataset(args.val_img, args.val_ann, offset_list,
                                scale=args.scale, limits=args.limits)
