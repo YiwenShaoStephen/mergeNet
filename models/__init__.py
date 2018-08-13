@@ -13,6 +13,7 @@ def get_model(num_classes, num_offsets, arch, pretrain=False):
     valid_archs += ['unet']
     valid_archs += ['pspnet']
     valid_archs += ['pspfpnet']
+    valid_archs += ['upernet']
     if arch not in valid_archs:
         raise ValueError('Supported models are: {} \n'
                          'but given {}'.format(valid_archs, arch))
@@ -23,7 +24,7 @@ def get_model(num_classes, num_offsets, arch, pretrain=False):
         scale = int(names[0][3:])
         model = FCNVGG16(num_classes + num_offsets,
                          scale=scale, pretrained=pretrain)
-    elif 'resnet' in arch:
+    elif 'fcn' in arch:
         names = arch.split('_')
         scale = int(names[0][3:])
         layer = int(names[1][6:])
@@ -31,12 +32,17 @@ def get_model(num_classes, num_offsets, arch, pretrain=False):
                           scale=scale, layer=layer, pretrained=pretrain)
     elif 'fpnet' in arch:
         layer = 50
-        model = PSPFPNet(num_classes + num_offsets, layer,
+        fpn_dim = 256
+        model = PSPFPNet(num_classes + num_offsets, layer, fpn_dim=fpn_dim,
                          pretrained=pretrain)
     elif 'pspnet' in arch:
         layer = 101
         model = PSPNet(num_classes + num_offsets,
                        layer, pretrained=pretrain)
+    elif 'upernet' in arch:
+        layer = 50
+        model = UperNet(num_classes + num_offsets, layer,
+                        pretrained=pretrain)
     # get the number of model parameters
     print('Number of model parameters: {}'.format(
         sum([p.data.nelement() for p in model.parameters()])))

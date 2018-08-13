@@ -36,17 +36,22 @@ class CrossEntropyLossOneHot(_WeightedLoss):
 
 
 class SoftDiceLoss(torch.nn.Module):
-    def __init__(self, smooth=1):
+    def __init__(self, mode='1', smooth=1):
         super(SoftDiceLoss, self).__init__()
+        self.mode = mode
         self.smooth = smooth
 
     def forward(self, input, target):
         assert(input.shape == target.shape)
         loss = 0
         n, c, h, w = input.shape
+        input_prob = torch.sigmoid(input)
         for i in range(c):
-            iflat = input[:, i, :, :].contiguous().view(-1)
+            iflat = input_prob[:, i, :, :].contiguous().view(-1)
             tflat = target[:, i, :, :].contiguous().view(-1)
+            if self.mode == '0':  # '0' is of more importance
+                iflat = 1 - iflat
+                tflat = 1 - tflat
             intersection = (iflat * tflat)
             loss += 1 - (2. * intersection.sum() + self.smooth) / \
                 (iflat.sum() + tflat.sum() + self.smooth)

@@ -7,7 +7,6 @@ import argparse
 import torch
 from models import get_model
 from utils.dataset import OffsetDataset
-from utils.train_utils import generate_offsets
 from utils.inference_utils import offset_inference
 
 parser = argparse.ArgumentParser(
@@ -40,9 +39,8 @@ def main():
         print("=> loading checkpoint '{}'".format(args.model))
         checkpoint = torch.load(args.model,
                                 map_location=lambda storage, loc: storage)
-        model.load_state_dict(checkpoint['state_dict'])
-        #offset_list = checkpoint['offset']
-        offset_list = generate_offsets(num_offsets)
+        model.load_state_dict(checkpoint['model_state'])
+        offset_list = checkpoint['offset']
         print("loaded.")
         print("offsets are: {}".format(offset_list))
     else:

@@ -11,6 +11,7 @@ import argparse
 import os
 import random
 from models import get_model
+from models.modules import DataParallelWithCallback
 import torch.optim.lr_scheduler as lr_scheduler
 from utils.dataset import AllDataset, ClassDataset, OffsetDataset
 from utils.loss import CrossEntropyLossOneHot, SoftDiceLoss, MultiBCEWithLogitsLoss
@@ -106,13 +107,34 @@ def main():
 
     # model
     model = get_model(num_classes, num_offsets, args.arch, args.pretrain)
+
+    # optionally resume from a checkpoint
+    if args.resume:
+        if os.path.isfile(args.resume):
+            print("=> loading checkpoint '{}'".format(args.resume))
+            checkpoint = torch.load(args.resume)
+            args.start_epoch = checkpoint['epoch']
+            best_iou = checkpoint['best_iou']
+            model.load_state_dict(checkpoint['model_state'])
+            if 'offset' in checkpoint:  # class mode doesn't have offset
+                offset_list = checkpoint['offset']
+                print("offsets are: {}".format(offset_list))
+            print("=> loaded checkpoint '{}' (epoch {})"
+                  .format(args.resume, checkpoint['epoch']))
+        else:
+            raise ValueError(
+                "=> no checkpoint found at '{}'".format(args.resume))
+
+    # model distribution
     if args.gpu != -1:
-        model = torch.nn.DataParallel(model, device_ids=args.gpu)
+        # DataParallel wrapper (synchronzied batchnorm edition)
+        if len(args.gpu) > 1:
+            model = DataParallelWithCallback(model, device_ids=args.gpu)
         model.cuda()
 
     # dataset
     if args.mode == 'all':
-        offset_list = generate_offsets(args.num_offsets)
+        offset_list = generate_offsets(80 / args.scale, args.num_offsets)
         trainset = AllDataset(args.train_img, args.train_ann, num_classes, offset_list,
                               scale=args.scale, crop=args.crop,
                               crop_size=(args.crop_size, args.crop_size),
@@ -130,7 +152,8 @@ def main():
                               scale=args.scale, limits=args.limits)
         class_nms = trainset.catNms
     elif args.mode == 'offset':
-        offset_list = generate_offsets(args.num_offsets)
+        offset_list = generate_offsets(80 / args.scale, args.num_offsets)
+        print("offsets are: {}".format(offset_list))
         trainset = OffsetDataset(args.train_img, args.train_ann, offset_list,
                                  scale=args.scale, crop=args.crop,
                                  crop_size=args.crop_size,
@@ -152,40 +175,12 @@ def main():
     optimizer = torch.optim.SGD(model.parameters(), args.lr,
                                 momentum=args.momentum, nesterov=args.nesterov,
                                 weight_decay=args.weight_decay)
-
-    # optionally resume from a checkpoint
     if args.resume:
-        if os.path.isfile(args.resume):
-            print("=> loading checkpoint '{}'".format(args.resume))
-            checkpoint = torch.load(args.resume)
-            args.start_epoch = checkpoint['epoch']
-            best_iou = checkpoint['best_iou']
-            model.load_state_dict(checkpoint['state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            if 'offset' in checkpoint:  # class mode doesn't has offset
-                offset_list = checkpoint['offset']
-                print("offsets are: {}".format(offset_list))
-            print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(args.resume, checkpoint['epoch']))
-        else:
-            raise ValueError(
-                "=> no checkpoint found at '{}'".format(args.resume))
+        optimizer.load_state_dict(checkpoint['optimizer'])
 
     # # define loss functions
-    # if args.loss == 'bce':
-    #     print('Using Binary Cross Entropy Loss')
-    #     criterion_cls = torch.nn.BCEWithLogitsLoss().cuda()
-    # elif args.loss == 'mbce':
-    #     print('Using Weighted Multiclass BCE Loss')
-    #     criterion_cls = MultiBCEWithLogitsLoss().cuda()
-    # elif args.loss == 'dice':
-    #     print('Using Soft Dice Loss')
-    #     criterion_cls = SoftDiceLoss().cuda()
-    # else:
-    #     print('Using Cross Entropy Loss')
-    #     criterion_cls = CrossEntropyLossOneHot().cuda()
 
-    # criterion_ofs = torch.nn.BCEWithLogitsLoss().cuda()
+    criterion_ofs = torch.nn.BCEWithLogitsLoss().cuda()
 
     if args.mode == 'all':
         criterion_cls = torch.nn.BCEWithLogitsLoss().cuda()
@@ -195,7 +190,18 @@ def main():
         criterion_ofs = None
     elif args.mode == 'offset':
         criterion_cls = None
-        criterion_ofs = torch.nn.BCEWithLogitsLoss().cuda()
+        if args.loss == 'bce':
+            print('Using Binary Cross Entropy Loss')
+            criterion_ofs = torch.nn.BCEWithLogitsLoss().cuda()
+        elif args.loss == 'mbce':
+            print('Using Weighted Multiclass BCE Loss')
+            criterion_ofs = MultiBCEWithLogitsLoss().cuda()
+        elif args.loss == 'dice':
+            print('Using Soft Dice Loss (0 mode)')
+            criterion_ofs = SoftDiceLoss(mode='0').cuda()
+        else:
+            print('Using Cross Entropy Loss')
+            criterion_ofs = CrossEntropyLossOneHot().cuda()
 
     # define learning rate scheduler
     if not args.milestones:
@@ -237,13 +243,21 @@ def main():
             sample(model, valloader, outdir, num_classes,
                    num_offsets)
 
+        # save checkpoint
         is_best = val_iou > best_iou
         best_iou = max(val_iou, best_iou)
-        state_dict = {'epoch': epoch + 1,
-                      'state_dict': model.state_dict(),
-                      'best_iou': best_iou,
-                      'optimizer': optimizer.state_dict()
-                      }
+        if args.gpu != -1 and len(args.gpu) > 1:
+            state_dict = {'epoch': epoch + 1,
+                          'model_state': model.module.state_dict(),  # remove 'module' in checkpoint
+                          'best_iou': best_iou,
+                          'optimizer': optimizer.state_dict()
+                          }
+        else:
+            state_dict = {'epoch': epoch + 1,
+                          'model_state': model.state_dict(),
+                          'best_iou': best_iou,
+                          'optimizer': optimizer.state_dict()
+                          }
         if args.mode != 'class':
             state_dict['offset'] = offset_list
         save_checkpoint(args.dir, state_dict, is_best)

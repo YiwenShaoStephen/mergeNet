@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+from models.modules import SynchronizedBatchNorm2d as SyncBatchNorm2d
 
 
 def conv3x3(in_channels, out_channels, stride=1,
@@ -55,8 +56,8 @@ class DownConv(nn.Module):
 
         self.conv1 = conv3x3(self.in_channels, self.out_channels)
         self.conv2 = conv3x3(self.out_channels, self.out_channels)
-        self.bn1 = nn.BatchNorm2d(self.out_channels)
-        self.bn2 = nn.BatchNorm2d(self.out_channels)
+        self.bn1 = SyncBatchNorm2d(self.out_channels)
+        self.bn2 = SyncBatchNorm2d(self.out_channels)
 
         if self.pooling:
             self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
@@ -95,8 +96,8 @@ class UpConv(nn.Module):
             # num of input channels to conv2 is same
             self.conv1 = conv3x3(self.out_channels, self.out_channels)
         self.conv2 = conv3x3(self.out_channels, self.out_channels)
-        self.bn1 = nn.BatchNorm2d(self.out_channels)
-        self.bn2 = nn.BatchNorm2d(self.out_channels)
+        self.bn1 = SyncBatchNorm2d(self.out_channels)
+        self.bn2 = SyncBatchNorm2d(self.out_channels)
 
     def forward(self, from_down, from_up):
         """ Forward pass

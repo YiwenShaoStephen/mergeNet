@@ -10,7 +10,6 @@ import shutil
 import time
 import math
 import torch
-import torch.nn.functional as F
 import torchvision
 from tensorboard_logger import log_value
 from utils.score import runningScore, offsetIoU
@@ -83,10 +82,10 @@ def train(trainloader, model, optimizer, batch_size, epoch, iterations,
 
         if criterion_cls and score:
             score_metrics.update(
-                F.sigmoid(class_pred), class_target)
+                torch.sigmoid(class_pred), class_target)
         if criterion_ofs and score:
             offset_metrics.update(
-                F.sigmoid(ofs_pred), ofs_target)
+                torch.sigmoid(ofs_pred), ofs_target)
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -182,10 +181,10 @@ def validate(validateloader, model, batch_size, epoch, iterations,
 
             if criterion_cls and score:
                 score_metrics.update(
-                    F.sigmoid(class_pred), class_target)
+                    torch.sigmoid(class_pred), class_target)
             if criterion_ofs and score:
                 offset_metrics.update(
-                    F.sigmoid(ofs_pred), ofs_target)
+                    torch.sigmoid(ofs_pred), ofs_target)
 
             # measure elapsed time
             batch_time.update(time.time() - end)
@@ -265,7 +264,7 @@ def sample(model, dataloader, outdir, n_classes, n_offsets):
     if next(model.parameters()).is_cuda:
         img = img.cuda()
     with torch.no_grad():
-        predictions = F.sigmoid(model(img))
+        predictions = torch.sigmoid(model(img))
 
     if with_class:
         class_pred = predictions[:, :n_classes, :, :]
@@ -315,10 +314,13 @@ class AverageMeter(object):
         self.avg = self.sum / self.count
 
 
-def generate_offsets(num_offsets=15):
+def generate_offsets(max_offset=20, num_offsets=10):
     offset_list = []
-    size_ratio = 1.4
     angle = math.pi * 5 / 9  # 100 degrees: just over 90 degrees.
+    triangle = max(abs(math.cos((num_offsets - 1) * angle)),
+                   abs(math.sin((num_offsets - 1) * angle)))
+    base = abs(max_offset / triangle)
+    size_ratio = math.pow(base, 1 / float(num_offsets - 1))
     for n in range(num_offsets):
         x = int(round(math.cos(n * angle) * math.pow(size_ratio, n)))
         y = int(round(math.sin(n * angle) * math.pow(size_ratio, n)))

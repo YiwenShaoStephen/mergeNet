@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
+from models.modules import SynchronizedBatchNorm2d as SyncBatchNorm2d
+from models.resnet import resnet50, resnet101
 
 
 class PyramidPoolingModule(nn.Module):
@@ -13,7 +15,7 @@ class PyramidPoolingModule(nn.Module):
             self.features.append(nn.Sequential(
                 nn.AdaptiveAvgPool2d(s),
                 nn.Conv2d(in_dim, out_dim, kernel_size=1, bias=False),
-                nn.BatchNorm2d(out_dim),
+                SyncBatchNorm2d(out_dim),
                 nn.ReLU(inplace=True)
             ))
         self.features = nn.ModuleList(self.features)
@@ -55,7 +57,7 @@ class FPNModule(nn.Module):
         self.final_conv = nn.Sequential(
             nn.Conv2d(len(in_dims) * fpn_dim, fpn_dim,
                       padding=1, kernel_size=3),
-            nn.BatchNorm2d(fpn_dim),
+            SyncBatchNorm2d(fpn_dim),
             nn.ReLU(inplace=True),
             nn.Conv2d(fpn_dim, num_classes, kernel_size=1)
         )
@@ -82,57 +84,6 @@ class FPNModule(nn.Module):
         fusion_out = torch.cat(fusion_list, 1)
         fpn_feature = self.final_conv(fusion_out)
         return fpn_feature
-
-
-class PSPNet(nn.Module):
-    def __init__(self, num_classes, layer, pretrained=False, pool_sizes=(1, 2, 3, 6)):
-        super(PSPNet, self).__init__()
-        if layer not in [18, 34, 50, 101, 152]:
-            raise ValueError('Resnet-{} is not supported \n'
-                             'Currently supported models are Resnet 18, 34, 50,\n'
-                             '101, 152'.format(layer))
-        print('Model: PSPNet_Resnet{}, Pretrained: {}'.format(
-            layer, pretrained))
-        if layer == 18:
-            self.resnet = torchvision.models.resnet18(pretrained=pretrained)
-        elif layer == 34:
-            self.resnet = torchvision.models.resnet34(pretrained=pretrained)
-        if layer == 50:
-            self.resnet = torchvision.models.resnet50(pretrained=pretrained)
-        elif layer == 101:
-            self.resnet = torchvision.models.resnet101(pretrained=pretrained)
-        elif layer == 152:
-            self.resnet = torchvision.models.resnet152(pretrained=pretrained)
-
-        expansion = self.resnet.layer1[0].expansion  # 4
-        feature_dim = 512 * expansion  # 2048
-        self.pool_sizes = pool_sizes
-        self.ppm = PyramidPoolingModule(feature_dim, self.pool_sizes)
-        self.final_conv = nn.Sequential(
-            nn.Conv2d(feature_dim * 2, 512,
-                      kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(512),
-            nn.ReLU(inplace=True),
-            nn.Dropout2d(0.1),
-            nn.Conv2d(512, num_classes, kernel_size=1)
-        )
-
-    def forward(self, x):
-        input_size = x.size()[2:]
-        x = self.resnet.conv1(x)
-        x = self.resnet.bn1(x)
-        x = self.resnet.relu(x)
-        x = self.resnet.maxpool(x)
-
-        x = self.resnet.layer1(x)
-        x = self.resnet.layer2(x)
-        x = self.resnet.layer3(x)
-        x = self.resnet.layer4(x)
-        x = self.ppm(x)
-        x = self.final_conv(x)
-        x = F.upsample(x, input_size, mode='bilinear')
-
-        return x
 
 
 class PSPFPNet(nn.Module):
@@ -172,6 +123,53 @@ class PSPFPNet(nn.Module):
         x = self.resnet.conv1(x)
         x = self.resnet.bn1(x)
         x = self.resnet.relu(x)
+        x = self.resnet.maxpool(x)
+
+        x = self.resnet.layer1(x)  # 4
+        down_features.append(x)
+        x = self.resnet.layer2(x)  # 8
+        down_features.append(x)
+        x = self.resnet.layer3(x)  # 16
+        down_features.append(x)
+        x = self.resnet.layer4(x)  # 32
+        x = self.ppm(x)
+        down_features.append(x)
+        x = self.fpn_module(down_features)
+        x = F.upsample(x, input_size, mode='bilinear')
+
+        return x
+
+
+class UperNet(nn.Module):
+    def __init__(self, num_classes, layer,
+                 fpn_dim=512, pretrained=False, pool_sizes=(1, 2, 3, 6)):
+        super(UperNet, self).__init__()
+        if layer not in [50, 101]:
+            raise ValueError('Resnet-{} is not supported \n'
+                             'Currently supported models are Resnet 50, 101'.format(layer))
+        print('Model: UperNet_Resnet{}, Pretrained: {}'.format(
+            layer, pretrained))
+        if layer == 50:
+            self.resnet = resnet50(pretrained=pretrained)
+        elif layer == 101:
+            self.resnet = resnet101(pretrained=pretrained)
+
+        expansion = self.resnet.layer1[0].expansion  # 4
+        in_dims = [64, 128, 256, 512]
+        in_dims = [dim * expansion for dim in in_dims]
+        ppm_indim = in_dims[-1]
+        self.pool_sizes = pool_sizes
+        self.ppm = PyramidPoolingModule(ppm_indim, self.pool_sizes)
+        ppm_outdim = ppm_indim * 2
+        in_dims[-1] = ppm_outdim
+        self.fpn_module = FPNModule(num_classes, fpn_dim, in_dims=in_dims)
+
+    def forward(self, x):
+        input_size = x.size()[2:]
+        down_features = []
+        x = self.resnet.relu1(self.resnet.bn1(self.resnet.conv1(x)))
+        x = self.resnet.relu2(self.resnet.bn2(self.resnet.conv2(x)))
+        x = self.resnet.relu3(self.resnet.bn3(self.resnet.conv3(x)))
         x = self.resnet.maxpool(x)
 
         x = self.resnet.layer1(x)  # 4

@@ -37,25 +37,17 @@ def main():
     args.batch_size = 4
     if args.caffe:
         model = pspnet(version='cityscapes')
-        if os.path.isfile(args.model):
-            print("=> loading checkpoint '{}'".format(args.model))
-            checkpoint = torch.load(args.model)
-            model.load_state_dict(checkpoint['model_state'])
-            print("loaded.")
-        else:
-            raise ValueError(
-                "=> no checkpoint found at '{}'".format(args.model))
     else:
         model = get_model(num_classes, 0, args.arch)
-        if os.path.isfile(args.model):
-            print("=> loading checkpoint '{}'".format(args.model))
-            checkpoint = torch.load(args.model,
-                                    map_location=lambda storage, loc: storage)
-            model.load_state_dict(checkpoint['state_dict'])
-            print("loaded.")
-        else:
-            raise ValueError(
-                "=> no checkpoint found at '{}'".format(args.model))
+    if os.path.isfile(args.model):
+        print("=> loading checkpoint '{}'".format(args.model))
+        checkpoint = torch.load(args.model,
+                                map_location=lambda storage, loc: storage)
+        model.load_state_dict(checkpoint['model_state'])
+        print("loaded.")
+    else:
+        raise ValueError(
+            "=> no checkpoint found at '{}'".format(args.model))
 
     valset = ClassDataset(args.img, args.ann,
                           mode='val', caffe=args.caffe)

@@ -123,6 +123,8 @@ class AllDataset:
         for n, (i, j) in enumerate(self.offset_list):
             rolled_mask = np.roll(np.roll(mask, -i, axis=0), -j, axis=1)
             target[self.num_classes + n, :, :] = (rolled_mask == mask)
+            target[self.num_classes + n, :-i, :] = 1
+            target[self.num_classes + n, :, :-j] = 1
 
         return target
 
@@ -264,7 +266,14 @@ class OffsetDataset:
         for n, (i, j) in enumerate(self.offset_list):
             rolled_mask = np.roll(np.roll(mask, -i, axis=0), -j, axis=1)
             target[n, :, :] = (rolled_mask == mask)
-
+            if i < 0:
+                target[n, :-i, :] = 1
+            elif i > 0:
+                target[n, -i:, :] = 1
+            if j < 0:
+                target[n, :, :-j] = 1
+            elif j > 0:
+                target[n, :, -j:] = 1
         return target
 
     def __to_tensor(self, img, target):
@@ -475,7 +484,7 @@ class ClassDataset:
 
 
 def anns_to_mask(anns, height, width, catIds=None):
-    """ Given the annotations (list of dicts), return its mask (instance-aware). 
+    """ Given the annotations (list of dicts), return its mask (instance-aware).
         And if catIds is given, also return the object_class
     """
     mask = np.zeros((height, width), dtype='uint16')
@@ -500,7 +509,7 @@ def anns_to_mask(anns, height, width, catIds=None):
 
 
 def anns_to_mask_class(anns, height, width, catIds):
-    """ Given the annotations (list of dicts), return its mask (not instance-aware). 
+    """ Given the annotations (list of dicts), return its mask (not instance-aware).
     """
     mask = np.zeros((height, width), dtype='uint8')
     for ann in anns:
@@ -646,16 +655,20 @@ if __name__ == "__main__":
     import torch.utils.data
     img_dir = 'data/val'
     ann = 'data/annotations/instancesonly_filtered_gtFine_val.json'
-    offset_list = [(-1, 0), (0, -1)]
-    # trainset = OffsetDataset(img_dir, ann, offset_list)
+    offset_list = [(20, 0), (0, 20)]
+    trainset = OffsetDataset(img_dir, ann, offset_list, scale=2)
     # trainset = ClassDataset(img_dir, ann, crop=True, crop_size=(384, 384))
-    trainset = AllDataset(img_dir, ann, 9, offset_list)
+    # trainset = AllDataset(img_dir, ann, 9, offset_list, scale=2)
     dataloader = torch.utils.data.DataLoader(trainset, batch_size=1)
-    img, target = next(iter(dataloader))
+    dataiter = iter(dataloader)
+    dataiter.next()
+    dataiter.next()
+    dataiter.next()
+    img, target = dataiter.next()
     torchvision.utils.save_image(img, 'raw.png')
     for i in range(len(offset_list)):
         torchvision.utils.save_image(
-            target[:, 9 + i:9 + i + 1, :, :], 'bound_{}.png'.format(i))
-    for i in range(len(trainset.catIds)):
-        torchvision.utils.save_image(
-            target[:, i:i + 1, :, :], 'class_{}.png'.format(i))
+            target[:, i:i + 1, :, :], 'bound_{}.png'.format(i))
+    # for i in range(len(trainset.catIds)):
+    #     torchvision.utils.save_image(
+    #         target[:, i:i + 1, :, :], 'class_{}.png'.format(i))
