@@ -104,9 +104,20 @@ void AdjacencyRecord::ComputeObjMergeLogprob(ObjectSegmenter* segmenter) {
 }
 
 
-void AdjacencyRecord::ComputeClassDeltaLogprob() {
+void AdjacencyRecord::ComputeClassDeltaLogprob(ObjectSegmenter* segmenter) {
   if (obj1->GetObjectClass() == obj2->GetObjectClass()) {
-    class_delta_logprob = 0.0;
+    // size_t threshold = 200;
+    // if (obj1->GetPixels()->size() > threshold && obj2->GetPixels()->size() > threshold) {
+    //   float ratio = obj1->GetPixels()->size() / obj2->GetPixels()->size();
+    //   if (ratio > 1) {
+    // 	ratio = 1 / ratio;
+    //   }
+    //   float log_ratio = log(ratio);
+    //   class_delta_logprob = -log_ratio/100 + segmenter->GetSegmenterOption()->merge_logprob_bias;
+    // } else {
+    //   class_delta_logprob = segmenter->GetSegmenterOption()->merge_logprob_bias;
+    // }
+    class_delta_logprob = 0;//
     merged_class = obj1->GetObjectClass();
   } else {
     size_t num_classes = obj1->GetClassLogprobs()->size();
@@ -132,13 +143,10 @@ void AdjacencyRecord::ComputeClassDeltaLogprob() {
 
 
 void AdjacencyRecord::UpdateMergePriority(ObjectSegmenter* segmenter) {
-  ComputeClassDeltaLogprob();
-  size_t den = obj1->GetPixels()->size() * obj2->GetPixels()->size();
-  merge_priority =  (obj_merge_logprob *
-                     segmenter->GetSegmenterOption()->object_merge_factor +
-                     class_delta_logprob +
-                     segmenter->GetSegmenterOption()->merge_logprob_bias) /
-                     den;
+  ComputeClassDeltaLogprob(segmenter);
+  size_t den = obj1->GetPixels()->size() + obj2->GetPixels()->size();
+  merge_priority = (obj_merge_logprob * segmenter->GetSegmenterOption()->object_merge_factor +
+		    class_delta_logprob) / den + segmenter->GetSegmenterOption()->merge_logprob_bias;
 }
 
 
@@ -412,6 +420,74 @@ bool ObjectSegmenter::Debug() {
 }
 
 
+// void ObjectSegmenter::Prune(float threshold) {
+//   size_t num_pixels = 0;
+//   Object *background_obj;
+//   vector<Object*> objects_to_be_merged;
+//   for (unordered_map<size_t, Object*>::iterator iter = objects.begin();
+//        iter != objects.end(); iter++) {
+//     Object *
+//     if (iter->second->GetObjectClass() != 0) {
+//       for (unordered_map<size_t, AdjacencyRecord*>::iterator arec_it =
+// 	     obj2->GetAdjacencyList()->begin(); arec_it !=
+// 	     obj2->GetAdjacencyList()->end(); arec_it++) {
+// 	AdjacencyRecord* arec = arec_it->second;
+      
+//        = iter->second->GetNoBackLogprob();
+//       if (nonbackground_score <= threshold) {
+// 	objects_to_be_merged.push_back(iter->second);
+//       }
+//     }
+//   }
+//   for (vector<Object*>::iterator iter = objects_to_be_merged.begin();
+//        iter != objects_to_be_merged.end(); iter++) {
+//     for (PixelSet::iterator iter_p = (*iter)->GetPixels()->begin();
+// 	 iter_p != (*iter)->GetPixels()->end(); iter_p++) {
+//       background_obj->GetPixels()->insert(*iter_p);
+//     }
+//     objects.erase((*iter)->GetId());
+//     delete *iter;
+//   }
+//   cout << "Pruned " << objects_to_be_merged.size() << "objects (merged into background)" << endl;
+//   cout << "Final objects: " << objects.size() << endl;
+// }
+
+
+void ObjectSegmenter::Prune(float threshold) {
+  size_t num_pixels = 0;
+  Object *background_obj = NULL;
+  vector<Object*> objects_to_be_merged;
+  for (unordered_map<size_t, Object*>::iterator iter = objects.begin();
+       iter != objects.end(); iter++) {
+    if (iter->second->GetObjectClass() == 0 && iter->second->GetPixels()->size() > num_pixels) {
+      if (background_obj != NULL) {
+	objects_to_be_merged.push_back(background_obj);
+      }
+      background_obj = iter->second;
+      num_pixels = iter->second->GetPixels()->size();
+    } else if (iter->second->GetObjectClass() == 0) {
+      objects_to_be_merged.push_back(iter->second);
+    } else if (iter->second->GetObjectClass() != 0) {
+      float nonbackground_score = iter->second->GetNoBackLogprob();
+      if (nonbackground_score <= threshold) {
+	objects_to_be_merged.push_back(iter->second);
+      }
+    }
+  }
+  for (vector<Object*>::iterator iter = objects_to_be_merged.begin();
+       iter != objects_to_be_merged.end(); iter++) {
+    for (PixelSet::iterator iter_p = (*iter)->GetPixels()->begin();
+	 iter_p != (*iter)->GetPixels()->end(); iter_p++) {
+      background_obj->GetPixels()->insert(*iter_p);
+    }
+    objects.erase((*iter)->GetId());
+    delete *iter;
+  }
+  cout << "Pruned " << objects_to_be_merged.size() << " objects (merged into background)" << endl;
+  cout << "Final objects: " << objects.size() << endl;
+}
+
+
 void ObjectSegmenter::OutputMask() {
   for (int i = 0; i < img_height; i++) {
     for (int j = 0; j < img_width; j++) {
@@ -467,7 +543,7 @@ void ObjectSegmenter::RunSegmentation() {
     if (verbose >= 0) {
       if (n % 500000 == 0) {
         cout << "At iteration: " << n << endl;
-        ShowStats();
+        // ShowStats();
       }
     }
     n += 1;
@@ -480,15 +556,16 @@ void ObjectSegmenter::RunSegmentation() {
     }
     if (arec->GetObj1() == NULL || arec->GetObj2() == NULL) {
       continue;
-    } 
+    }
     arec->UpdateMergePriority(this);
-    if (arec->GetPriority() >= merge_priority) {
+    if (arec->GetPriority() == merge_priority) {
       Merge(arec);
     } else if (arec->GetPriority() >= 0) {
       segmenter_queue.push(make_pair(arec->GetPriority(), arec));
     }
   }
   cout << "Finished. Queue is empty." << endl;
+  //Prune(100);
   ShowStats();
   // ComputeTotalLogprobFromScratch();
   // Visualize();
@@ -602,7 +679,7 @@ void ObjectSegmenter::Merge(AdjacencyRecord* arec) {
     // As obj2 is deleted, so remove this_arec from some lists
     adjacency_records.erase(old_hashvalue);
     obj3->GetAdjacencyList()->erase(old_hashvalue);
-   
+
     // If previous has an AdjacencyRecord(obj1[without obj2], obj3),
     // update it (add this_arec value to it).
     if ( (obj1->GetAdjacencyList())->find(this_arec->GetHashValue()) !=
@@ -628,6 +705,13 @@ void ObjectSegmenter::Merge(AdjacencyRecord* arec) {
          segmenter_queue.push(make_pair(this_arec->GetPriority(), this_arec));
       }
     }
+    // for (unordered_map<size_t, AdjacencyRecord*>::iterator arec_old_it =
+    //    obj1->GetAdjacencyList()->begin(); arec_old_it !=
+    //    obj1->GetAdjacencyList()->end(); arec_old_it++) {
+    //   AdjacencyRecord* arec_old = arec_old_it->second;
+    //   arec_old->UpdateMergePriority(this);
+    // }
+    
   }
   if (verbose >= 1) {
     cout << "Deleting obj" << obj2->GetId()

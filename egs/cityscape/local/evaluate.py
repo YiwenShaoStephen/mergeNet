@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 # Copyright      2018  Yiwen Shao
 
 # Apache 2.0
@@ -15,7 +13,7 @@ parser = argparse.ArgumentParser(description='scoring script for COCO dataset')
 parser.add_argument('--segment-dir', type=str, required=True,
                     help='Directory of segmentation results')
 parser.add_argument('--val-ann', type=str,
-                    default='data/download/annotations/instances_val2017.json',
+                    default='data/annotations/instancesonly_filtered_gtFine_val.json',
                     help='Path to validation annotations file')
 parser.add_argument('--imgid', type=int, default=None,
                     help='If given, only do evaluation on that image.'
@@ -42,7 +40,7 @@ def main():
 def evaluate(coco, segment_dir, class_nms, imgid=None):
     pkl_dir = os.path.join(segment_dir, 'pkl')
     results = []
-    if imgid:
+    if imgid is not None:
         imgIds = [imgid]
     else:
         imgIds = []
@@ -54,7 +52,7 @@ def evaluate(coco, segment_dir, class_nms, imgid=None):
                 area = maskUtils.area(r['segmentation'])
                 if area > 0:
                     results.append(r)
-            if not imgid:
+            if imgid is None:
                 # imgId should be int instead of str
                 imgId = int(pkl_file.split('.')[0])
                 imgIds.append(imgId)

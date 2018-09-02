@@ -209,7 +209,7 @@ def main():
     else:
         milestones = args.milestones
     scheduler = lr_scheduler.MultiStepLR(
-        optimizer, milestones=milestones, gamma=0.1, last_epoch=args.start_epoch - 1)
+        optimizer, milestones=milestones, gamma=0.2, last_epoch=args.start_epoch - 1)
 
     # start iteration count
     iterations = args.start_epoch * int(len(trainset) / args.batch_size)

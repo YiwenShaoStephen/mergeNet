@@ -12,11 +12,12 @@ import numpy as np
 import torch
 import torch.utils.data
 import cv2
-from utils.segmenter import ObjectSegmenter, SegmenterOptions
 from utils.data_visualization import visualize_mask
 from utils.dataset import AllDataset
 from utils.train_utils import generate_offsets
 from pycocotools import mask as maskUtils
+import utils.csegment.c_segment as cseg
+
 
 parser = argparse.ArgumentParser(
     description='Pytorch cityscapes instance segmentation setup')
@@ -73,7 +74,7 @@ def main():
     num_classes = args.num_classes
     num_offsets = args.num_offsets
 
-    offset_list = generate_offsets(num_offsets)
+    offset_list = generate_offsets(40, num_offsets)
     print("offsets are: {}".format(offset_list))
 
     # dataset
@@ -87,8 +88,9 @@ def main():
         testset, num_workers=0, batch_size=1)
 
     catIds = testset.catIds
+    # coco_obj = testset.coco
     segment_dir = os.path.join(args.dir, args.segment)
-    seg_size = (512, 256)
+    seg_size = (1024, 512)
     segment(dataloader, segment_dir, num_classes,
             offset_list, seg_size, catIds)
 
@@ -98,6 +100,7 @@ def segment(dataloader, segment_dir, num_classes, offset_list, seg_size, catIds)
         os.makedirs(segment_dir)
     img_dir = os.path.join(segment_dir, 'img')
     pkl_dir = os.path.join(segment_dir, 'pkl')
+    # result_dir = os.path.join(segment_dir, 'result')
     exist_ids = next(os.walk(pkl_dir))[2]
 
     for i, (image_id, img, size) in enumerate(dataloader):
@@ -116,15 +119,28 @@ def segment(dataloader, segment_dir, num_classes, offset_list, seg_size, catIds)
             bound_mask = cv2.resize(bound_mask, seg_size)
             class_mask = np.moveaxis(class_mask, -1, 0)
             bound_mask = np.moveaxis(bound_mask, -1, 0)
+            class_mask = class_mask.copy(order='C')
+            bound_mask = bound_mask.copy(order='C')
+
+        # if args.object_merge_factor is None:
+        #     args.object_merge_factor = 1.0 / len(offset_list)
+        #     segmenter_opts = SegmenterOptions(same_different_bias=args.same_different_bias,
+        #                                       object_merge_factor=args.object_merge_factor,
+        #                                       merge_logprob_bias=args.merge_logprob_bias)
+        # seg = ObjectSegmenter(class_mask, bound_mask, num_classes, offset_list,
+        #                       segmenter_opts)
+        # mask, object_class = seg.run_segmentation()
 
         if args.object_merge_factor is None:
-            args.object_merge_factor = 1.0 / len(offset_list)
-            segmenter_opts = SegmenterOptions(same_different_bias=args.same_different_bias,
-                                              object_merge_factor=args.object_merge_factor,
-                                              merge_logprob_bias=args.merge_logprob_bias)
-        seg = ObjectSegmenter(class_mask, bound_mask, num_classes, offset_list,
-                              segmenter_opts)
-        mask, object_class = seg.run_segmentation()
+            args.object_merge_factor = 1  # / len(offset_list)
+        args.merge_logprob_bias = 0.03
+
+        mask, object_class = cseg.run_segmentation(class_mask, bound_mask,
+                                                   num_classes,
+                                                   offset_list,
+                                                   args.same_different_bias,
+                                                   args.object_merge_factor,
+                                                   args.merge_logprob_bias)
 
         # resize the mask back to the original image size
         if seg_size:
@@ -134,7 +150,7 @@ def segment(dataloader, segment_dir, num_classes, offset_list, seg_size, catIds)
         img = img[0].detach().numpy()
         # store segmentation result as image
         if args.visualize:
-            masked_img = visualize_mask(img, mask)
+            masked_img = visualize_mask(img, mask, transparency=0.3)
             cv2.imwrite('{}/{}.png'.format(img_dir, image_id),
                         cv2.cvtColor(masked_img, cv2.COLOR_RGB2BGR))
 
@@ -142,6 +158,8 @@ def segment(dataloader, segment_dir, num_classes, offset_list, seg_size, catIds)
         result = convert_to_coco_result(mask, object_class, image_id, catIds)
         with open('{}/{}.pkl'.format(pkl_dir, image_id), 'wb') as fh:
             pickle.dump(result, fh)
+        # convert_to_cityscapes_result(
+        #     mask, object_class, image_id, result_dir, coco)
 
 
 def convert_to_coco_result(mask, object_class, image_id, catIds):
@@ -166,6 +184,25 @@ def convert_to_coco_result(mask, object_class, image_id, catIds):
         }
         results.append(result)
     return results
+
+
+def convert_to_cityscapes_result(mask, object_class, image_id, result_dir, coco,
+                                 labelID=[0, 24, 25, 26, 27, 28, 31, 32, 33]):
+    img_name = coco.loadImgs(image_id)[0]['file_name'].split('.')[0]
+    txt_filename = img_name + '.txt'
+    txt_path = os.path.join(result_dir, txt_filename)
+    with open(txt_path, 'w') as fh:
+        num_objects = mask.max()
+        for i in range(1, num_objects + 1):
+            b_mask = (mask == i).astype('uint8') * 255
+            b_mask_filename = '{}_{}.png'.format(img_name, i)
+            b_mask_path = os.path.join(result_dir, b_mask_filename)
+            cv2.imwrite(b_mask_path, b_mask)
+            label_id = labelID[object_class[i - 1]]
+            confidence = 1.0
+            result_string = "{} {} {}\n".format(
+                b_mask_filename, label_id, confidence)
+            fh.write(result_string)
 
 
 if __name__ == '__main__':

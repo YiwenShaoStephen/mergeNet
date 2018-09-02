@@ -106,6 +106,7 @@ class Object {
   }
 
   inline float GetClassLogprob() { return class_logprobs[object_class]; }
+  inline float GetNoBackLogprob() {return class_logprobs[object_class] - class_logprobs[0];}
 
   inline size_t GetId() { return id; }
 
@@ -178,7 +179,7 @@ class AdjacencyRecord {
 
   void ComputeObjMergeLogprob(ObjectSegmenter* segmenter);
 
-  void ComputeClassDeltaLogprob();
+  void ComputeClassDeltaLogprob(ObjectSegmenter* segmenter);
 
   void UpdateMergePriority(ObjectSegmenter* segmenter);
 
@@ -314,6 +315,8 @@ class ObjectSegmenter {
   void RunSegmentation();
 
   void OutputMask();
+
+  void Prune(float threshold=500);
 
   void Merge(AdjacencyRecord* arec);
 
